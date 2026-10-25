@@ -1,0 +1,78 @@
+FROM docker.io/pytorch/pytorch:2.5.1-cuda12.4-cudnn9-runtime
+
+# --- system tools & libraries the Python wheels need ---
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential \
+        git \
+        curl \
+        wget \
+        unzip \
+        ca-certificates \
+        ffmpeg \
+        libsndfile1 \
+        libgl1 \
+        libglib2.0-0 \
+        libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- environment ---
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    PIP_NO_CACHE_DIR=1 \
+    HF_HOME=/workspace/.cache/huggingface \
+    TOKENIZERS_PARALLELISM=false
+
+# --- core data / science stack ---
+RUN pip install --no-cache-dir \
+        numpy \
+        pandas \
+        scipy \
+        matplotlib \
+        scikit-learn \
+        pillow \
+        opencv-python-headless \
+        soundfile \
+        librosa \
+        einops \
+        tqdm \
+        rich
+
+# --- deep learning: torch already ships in the base image (2.5.1+cu124),
+#     so these are no-ops; kept for clarity if you ever swap the base ---
+RUN pip install --no-cache-dir \
+        torch \
+        torchvision \
+        torchaudio
+
+# --- models, fine-tuning, training at scale ---
+#     transformers pinned <5: version 5.x needs torch >= 2.6
+RUN pip install --no-cache-dir \
+        "transformers>=4.46,<5" \
+        datasets \
+        tokenizers \
+        sentencepiece \
+        safetensors \
+        accelerate \
+        peft \
+        trl \
+        evaluate \
+        timm \
+        bitsandbytes
+
+# --- experiment tracking & evaluation ---
+RUN pip install --no-cache-dir \
+        tensorboard \
+        wandb \
+        lm-eval
+
+# --- interactive work & dev tooling ---
+RUN pip install --no-cache-dir \
+        jupyterlab \
+        ipywidgets \
+        pytest \
+        ruff \
+        black
+
+WORKDIR /workspace
+EXPOSE 8888
+CMD ["bash"]
