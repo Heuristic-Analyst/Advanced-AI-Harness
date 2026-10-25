@@ -1,0 +1,17 @@
+# your API keys and your chats: never on GitHub
+.env
+# everything in Conversations/, except its README. (git can't bring a file back from an ignored folder, so the
+# folder's contents are ignored instead of the folder itself)
+Conversations/*
+!Conversations/README.md
+
+# what the agent makes in Shared Folder (Common and the projects): yours, not GitHub's. only the notebook engine is
+# part of the program, so it stays
+Shared Folder/*
+!Shared Folder/Notebook_Engine/
+
+# the "in use" signs of running instances: only for this computer
+Locks/
+
+# python's cache files
+__pycache__/
