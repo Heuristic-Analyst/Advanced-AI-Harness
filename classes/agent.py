@@ -37,7 +37,8 @@ what was tried and did not work, and why, so it is not tried again
 ## Open
 what is left, and the very next step
 ## Files
-the saved results that matter (results-1, ...: read_result shows them again), and any other files
+the saved results that matter (results-1, ...: read_result shows them again), and the files, notebooks and projects
+in /workspace/... that matter, each with what it is for. (what runs in the sandbox right now is in your system prompt)
 ## Last exchange
 the user's last message and your last answer, in short"""
 
@@ -46,12 +47,13 @@ You are in the MIDDLE of a task: say exactly where you are in it, and what you w
 
 GO_ON = """[from the program, not the user] Your conversation was emptied in the middle of the task, after your
 checkpoint. Your checkpoint (in your system prompt) says where you were: go on with the task from there. Long results
-you saw before are still saved: read_result and search_result show them."""
+you saw before are still saved: read_result and search_result show them. What runs in your sandbox right now is at the
+end of your system prompt."""
 
 class Agent:
     def __init__(self, model, api_key, instructions=None, stream=False, effort=None, print_thinking=False,
                  tools=None, skills=None, conversation=None, log_file=None, results_dir=None,
-                 checkpoint_file=None, context_limit=None):
+                 checkpoint_file=None, context_limit=None, sandbox=None):
         self.model = model
         self.api_key = api_key
         self.instructions = instructions       # who the agent is (the soul): the first part of its system prompt
@@ -74,6 +76,9 @@ class Agent:
         self.checkpoint_asked = None           # None, or why a checkpoint was asked for: "end" (a task ended above
                                                # CHECKPOINT_AT) or "emergency" (above EMERGENCY_AT in a task)
         self.cleared = False                   # True right after the checkpoint tool emptied the conversation
+        self.sandbox = sandbox                 # this instance's Sandbox (classes/sandbox.py), shared by every
+                                               # conversation of the run: the sandbox and notebook tools use it.
+                                               # None = no sandboxes (podman missing): no workspace in the system prompt
         self.conversation = conversation or []
         self.refresh_system()  # always. no instructions = no system message (see refresh_system)
         self.counted = len(self.conversation)  # how many messages self.tokens covers. the ones after it (tool results,
@@ -115,6 +120,10 @@ class Agent:
             system += ("\n\nYour checkpoint: your own notes from earlier in this conversation, written before the "
                        "conversation was emptied to make room. It is where you stand.\n<checkpoint>\n"
                        + checkpoint + "\n</checkpoint>")
+        if self.sandbox:                  # 4. its workspace: what runs in the sandbox, as of now. built only when the
+                                          #    system prompt is built (a new conversation, /open, a checkpoint), so a
+                                          #    fresh context always knows it, and the cache stays valid in between
+            system += "\n\n" + self.sandbox.snapshot()
         return system.strip()             # strip: no skills and no soul -> "" -> no system message at all
 
     def refresh_system(self):

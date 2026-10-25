@@ -1,4 +1,5 @@
 import os
+import datetime
 from functions.read_json import read_json
 from functions.environment import read_key
 
@@ -11,6 +12,23 @@ TOOLS_DIR = os.path.join(HERE, "tools")              # tools/<name>.py = one too
 SKILLS_DIR = os.path.join(HERE, "skills")            # skills/<name>/SKILL.md = one skill each (see functions/load_skills.py)
 CONVERSATIONS_DIR = os.path.join(HERE, "Conversations")   # Conversations/<name>/state.json = one conversation each
                                                           # (see functions/conversations.py). created with the first one
+SANDBOXES_DIR = os.path.join(HERE, "Sandboxes")      # Sandboxes/<name>/Containerfile = one sandbox each (classes/sandbox.py)
+SHARED_DIR = os.path.join(HERE, "Shared Folder")     # the ONLY folder of your computer a sandbox sees parts of:
+COMMON = "Common"                                    #   Shared Folder/Common: mounted in every sandbox, always
+ENGINE = "Notebook_Engine"                           #   Shared Folder/Notebook_Engine: the notebook engine, mounted read-only
+                                                     #   Shared Folder/<project>: one project at a time, mounted by the agent
+LOCKS_DIR = os.path.join(HERE, "Locks")              # "in use" signs of the running instances (functions/locks.py)
+
+# This running main.py (an "instance"): its process number and when it started. you can run several at once, each
+# with its own sandbox. the time keeps it unique: after a restart, another program may get the same process number
+INSTANCE = str(os.getpid()) + "-" + datetime.datetime.now().strftime("%Y%m%d%H%M%S")   # e.g. 48213-20261025161304
+
+# Sandbox (see classes/sandbox.py). limits for a running sandbox, so a runaway script can't take your computer down
+CONTAINER_CMD = "podman"   # the container program. podman is rootless: "root" inside the sandbox is just you outside
+SANDBOX_MEMORY = "2g"      # memory a sandbox may use
+SANDBOX_CPUS = "2"         # CPU cores a sandbox may use
+SANDBOX_PIDS = 512         # processes a sandbox may have at once
+COMMAND_TIMEOUT = 600      # seconds a command in the sandbox (sandbox_shell, a notebook call) may run, then it is stopped
 
 # Model settings: read the file once, then take what we need from it
 MODEL_SETTINGS = read_json(MODEL_FILE)

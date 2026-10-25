@@ -4,7 +4,8 @@ import importlib.util
 
 def load_tools(folder):
     """find every tool in folder, also in subfolders, and load it. returns a dict:
-        tool name -> {"schema": what the model sees, in the format it wants,  "run": the function to call}
+        tool name -> {"schema": what the model sees, in the format it wants,  "run": the function to call,
+                      "folder": its folder inside tools/, e.g. "sandbox" (main.py drops a whole folder that can't work)}
     files and folders starting with _ are skipped: room for helper code next to the tools (_helpers.py).
     a new tool = a new file: nothing else has to change anywhere"""
     tools = {}
@@ -26,6 +27,8 @@ def load_tools(folder):
                 raise SystemExit("two tools are called '" + name + "': " + found_in[name] + " and " + where
                                  + ". rename one")
             tools[name] = {"schema": {"type": "function", "function": module.TOOL},   # how the model wants it
-                           "run": module.run}
+                           "run": module.run,
+                           "folder": os.path.relpath(current, folder).replace(os.sep, "/")}   # "sandbox", or "." for
+                                                                                                 # a file in tools/ itself
             found_in[name] = where
     return tools

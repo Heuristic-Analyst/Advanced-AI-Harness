@@ -5,6 +5,10 @@ A skill is a set of step-by-step instructions for one kind of task, written for 
 | Skill | What it is for |
 |---|---|
 | `stepwise-calculation` | Calculations with more than one step: break them down, calculate each step with `calculate`, show every step. |
+| `sandbox` | Running code and working with files and projects: what is kept, picking the project before opening, long jobs, the network. |
+| `notebook` | Working in a Jupyter notebook with the `nb_*` tools: a plan cell, one step per cell, reading the overview. |
+
+Without Podman, `main.py` removes the `sandbox` and `notebook` skills, together with their tools.
 
 ## How skills work
 

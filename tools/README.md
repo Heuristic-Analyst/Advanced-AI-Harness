@@ -10,6 +10,27 @@ Everything the agent can *do* is a tool, and every tool is one Python file in he
 | `checkpoint` | `basic/checkpoint.py` | Saves the model's checkpoint as `checkpoint.md`, empties the conversation and puts the checkpoint into the system prompt. Only works when the program asked for it: when the conversation got too full (`CHECKPOINT_AT`, `EMERGENCY_AT` in `config.py`). The log and the saved results stay. |
 | `read_result` | `results/read_result.py` | Shows **one** part of a saved result (see "Long results" below). Never more than one, so a huge result can't fill the context. |
 | `search_result` | `results/search_result.py` | `grep` for one saved result: every matching line with its part and line number. With grep's options: regex, ignore case, whole word, invert, lines before/after, only the matched piece, count, max count. |
+| `check_sandbox` | `sandbox/check_sandbox.py` | Every sandbox with its whole Containerfile, and which one runs here. Changes nothing. |
+| `open_sandbox` | `sandbox/open_sandbox.py` | Builds and starts a sandbox for this instance, network off, optionally with a project mounted right away. |
+| `close_sandbox` | `sandbox/close_sandbox.py` | Stops it. Its project is free for other instances again. |
+| `sandbox_shell` | `sandbox/sandbox_shell.py` | Runs a bash command inside, and returns what it printed. Stopped after `COMMAND_TIMEOUT` seconds. |
+| `check_projects` | `sandbox/check_projects.py` | The project folders: free, mounted here, or mounted by another running instance. |
+| `create_project` | `sandbox/create_project.py` | A new, empty folder `Shared Folder/<name>`. |
+| `mount_project` | `sandbox/mount_project.py` | Mounts one project at `/workspace/<name>`. Restarts the sandbox. |
+| `unmount_project` | `sandbox/unmount_project.py` | Unmounts it. Restarts the sandbox. |
+| `rename_project` | `sandbox/rename_project.py` | Renames a project folder nobody has mounted. |
+| `delete_project` | `sandbox/delete_project.py` | Deletes a project folder with everything in it, if nobody has it mounted. |
+| `nb_create` | `notebook/nb_create.py` | Makes a new notebook in `Common/` or the mounted project and starts its kernel. |
+| `nb_open` | `notebook/nb_open.py` | Opens an existing notebook (starting its kernel) and returns all of it. Already open? Its variables are kept. |
+| `nb_close` | `notebook/nb_close.py` | Stops a notebook's kernel. Its variables are gone, the file stays. |
+| `nb_add` | `notebook/nb_add.py` | Adds a code or markdown cell, at the end or after a given cell, optionally running it. |
+| `nb_edit` | `notebook/nb_edit.py` | Replaces a cell's whole code, optionally running it. |
+| `nb_remove` | `notebook/nb_remove.py` | Removes a cell. |
+| `nb_run` | `notebook/nb_run.py` | Runs one or more cells, in the order given. |
+| `nb_show` | `notebook/nb_show.py` | Returns the whole notebook: every cell with code and output. |
+| `nb_rerun` | `notebook/nb_rerun.py` | Fresh kernel, then every cell from the top. |
+
+The sandbox and notebook tools are thin: the work is in `classes/sandbox.py` (and `notebook/_notebook.py`), which they reach as `agent.sandbox`. Without Podman, `main.py` takes the whole `sandbox/` and `notebook/` folders away from the model.
 
 ## How a tool file looks
 
@@ -115,4 +136,5 @@ An answer from `search_result` that is too long is saved as a new result too. Th
 - **Tools run in parallel.** Two calls of the same tool can run at the same time. If a tool changes something shared (a file, a variable), make sure two runs at once can't get in each other's way.
 - **Keep results short.** Every result is sent to the model again with every later call. A tool that returns a whole file fills the conversation fast: return what matters, or a summary.
 - **Things that can hang get a time limit**, like the 5 seconds in `calculate.py`. Otherwise the agent waits forever.
-- **Every agent gets every tool** in this folder, for now.
+- **Every agent gets every tool** in this folder, for now. (Exception: without Podman, the `sandbox/` and `notebook/` folders are left out.)
+- **Run nothing on the user's computer.** A tool that needs to run code passes it to `agent.sandbox.exec(...)`, like `sandbox_shell` does.
