@@ -1,4 +1,4 @@
-# Basic AI Harness, from scratch
+# Advanced AI Harness, from scratch
 
 A small AI assistant that runs in your terminal, built step by step so that every line is understood. It talks to any model through [LiteLLM](https://github.com/BerriAI/litellm), can use tools, loads skills when it needs them, saves every conversation, and keeps working when a conversation gets too long for the model. Everything it runs, it runs in a throwaway [Podman](https://podman.io) sandbox, never on your computer, including Jupyter notebooks.
 
