@@ -147,7 +147,7 @@ class Sandbox:
     def build(self, name):
         """build the image from the Containerfile. None if it worked, otherwise the end of the build's output"""
         print("[sandbox] building " + name + " from Sandboxes/" + name + "/Containerfile (quick if nothing changed) ...")
-        code, out = self.podman("build", "--tag", self.image(name), os.path.join(self.sandboxes_dir, name), timeout=1800)
+        code, out = self.podman("build", "--tag", self.image(name), os.path.join(self.sandboxes_dir, name), timeout=3600)
         if code != 0:
             return "the build of " + name + " failed. the end of its output:\n" + out[-2000:]
         return None
