@@ -698,8 +698,8 @@ class Gui:
                               memory=SANDBOX_MEMORY, cpus=SANDBOX_CPUS, pids=SANDBOX_PIDS,
                               timeout=COMMAND_TIMEOUT)
             import atexit
-            atexit.register(sandbox.shutdown)
             atexit.register(locks.stop)
+            atexit.register(sandbox.shutdown)
 
             workspace = None
             if sandbox.available():
