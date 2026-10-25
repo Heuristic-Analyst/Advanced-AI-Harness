@@ -1,0 +1,7 @@
+{
+  "Model": "deepseek/deepseek-flash",
+  "Stream": true,
+  "Effort": "high",
+  "PrintThinking": true,
+  "ContextLimit": 100000
+}

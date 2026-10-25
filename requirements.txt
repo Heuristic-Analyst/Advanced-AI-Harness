@@ -1,0 +1,2 @@
+litellm==1.105.1    # the same pin as the original. 1.106 rc / 1.107 dev need the extra "mcp" package because of a litellm bug
+tzdata; sys_platform == "win32"    # time zones for get_time. linux and mac have their own
