@@ -64,7 +64,7 @@ ACCENT  = "#C2623C"
 ACCENT_D= "#A14E2E"
 CODE_BG = "#F3F0E8"
 USER_BG = "#EDE7DB"
-SELECT  = "#DED7C8"
+SELECT  = "#C9D8EC"     # a selection has to be visible over every other colour in the transcript
 LINK    = "#2F6DB5"
 OK      = "#5F8C5C"
 WARN    = "#C9922E"
@@ -151,6 +151,7 @@ def insert_inline(w, text, tags):
         else:
             tag = "linktag_%d" % next(_link_ids)      # one tag per link: a click knows its own url
             w.t.tag_configure(tag, foreground=LINK, underline=True)
+            w.t.tag_raise("sel")
             try:
                 w.t.tag_bind(tag, "<Button-1>", lambda e, u=url: webbrowser.open(u))
             except tk.TclError:
@@ -477,11 +478,22 @@ class Gui:
 
         self._style_tags()
 
-        # read only, but clickable: keys do nothing, the mouse still selects and clicks the fold lines
+        # read only, but selectable: typing does nothing, everything else (select, copy, the fold lines) works
         self.txt.bind("<Key>", self._readonly)
+        self.txt.bind("<Button-1>", lambda e: self.txt.focus_set(), add="+")
         self.txt.bind("<<Paste>>", lambda e: "break")
         self.txt.bind("<<Cut>>", lambda e: "break")
-        self.txt.bind("<Button-2>", lambda e: "break")
+        self.txt.bind("<<Copy>>", self._copy_selection)
+        self.txt.bind("<<SelectAll>>", self._select_all)
+        self.txt.bind("<Control-c>", self._copy_selection)
+        self.txt.bind("<Control-a>", self._select_all)
+        try:                                   # cmd+c / cmd+a on a mac (the modifier is not on every system)
+            self.txt.bind("<Command-c>", self._copy_selection)
+            self.txt.bind("<Command-a>", self._select_all)
+        except tk.TclError:
+            pass
+        for seq in ("<Button-3>", "<Button-2>", "<Control-Button-1>"):
+            self.txt.bind(seq, self._text_menu)
         for seq in ("<MouseWheel>", "<Button-4>", "<Button-5>"):
             self.txt.bind(seq, self._scrolled, add="+")
 
@@ -508,6 +520,10 @@ class Gui:
         t.tag_configure("note", font=f["small"], foreground=MUTED, spacing1=3, spacing3=3, lmargin1=2)
         t.tag_configure("error", font=f["small"], foreground=BAD, spacing1=3, spacing3=3, lmargin1=2)
         t.tag_configure("rule", font=f["tiny"], foreground=FAINT, spacing1=10, spacing3=10)
+        # tk draws the selection with the tag "sel", and a tag created LATER wins. everything drawn here
+        # (code blocks, quotes, bubbles) is created later, so without this the highlight would be invisible
+        # over exactly the parts you most want to copy.
+        t.tag_raise("sel")
 
     def _input_area(self):
         outer = tk.Frame(self.chat, bg=BG)
@@ -534,6 +550,12 @@ class Gui:
                              bg=BG, fg=FAINT, font=self.F["tiny"], anchor="w")
         self.hint.pack(side="top", fill="x", pady=(5, 0))
 
+        try:                                  # ctrl+a / cmd+a in the box: select the whole message
+            self.entry.bind("<Control-a>", self._entry_select_all)
+            self.entry.bind("<Command-a>", self._entry_select_all)
+        except tk.TclError:
+            pass
+        self.entry.bind("<Control-A>", self._entry_select_all)
         self.entry.bind("<Return>", self._on_return)
         self.entry.bind("<Shift-Return>", self._on_shift_return)
         self.entry.bind("<Escape>", lambda e: "break")
@@ -552,6 +574,14 @@ class Gui:
                   highlightthickness=0, activebackground=PANEL_2, cursor="hand2",
                   font=self.F["ui"]).pack(side="right", padx=(0, 4))
 
+        actions = tk.Frame(self.side, bg=PANEL)           # packed before the list, so it keeps its room
+        actions.pack(side="bottom", fill="x", padx=10, pady=(0, 10))
+        for text, job in (("Rename", self._rename_selected), ("Delete", self._delete_selected)):
+            tk.Button(actions, text=text, command=job, bg=PANEL, fg=MUTED, relief="flat", bd=0,
+                      highlightthickness=0, activebackground=PANEL_2, activeforeground=TEXT,
+                      cursor="hand2", padx=8, pady=3,
+                      font=self.F["small"]).pack(side="left", padx=(0, 4))
+
         listwrap = tk.Frame(self.side, bg=PANEL)
         listwrap.pack(side="top", fill="both", expand=True, padx=(8, 2), pady=(2, 10))
 
@@ -566,6 +596,8 @@ class Gui:
         self.lb.bind("<<ListboxSelect>>", self._on_pick)
         for seq in ("<Button-3>", "<Button-2>", "<Control-Button-1>"):
             self.lb.bind(seq, self._list_menu)
+        self.lb.bind("<Delete>", lambda e: self._delete_selected())
+        self.lb.bind("<F2>", lambda e: self._rename_selected())
 
         tk.Frame(self.side, bg=LINE, width=1).place(x=SIDE_W - 1, y=0, relheight=1)
 
@@ -868,6 +900,23 @@ class Gui:
         self._refresh_sidebar()
         self.entry.focus_set()
 
+    def _selected_name(self):
+        """the conversation highlighted in the list (the open one, if nothing is highlighted)"""
+        sel = self.lb.curselection()
+        if sel and int(sel[0]) < len(self.conv_names):
+            return self.conv_names[int(sel[0])]
+        return self.current
+
+    def _rename_selected(self):
+        name = self._selected_name()
+        if name:
+            self._rename(name)
+
+    def _delete_selected(self):
+        name = self._selected_name()
+        if name:
+            self._delete(name)
+
     def _rename(self, name):
         if self.busy:
             return
@@ -928,6 +977,70 @@ class Gui:
             return None
         return "break"
 
+    def _has_selection(self):
+        try:
+            return bool(self.txt.tag_ranges("sel"))
+        except tk.TclError:
+            return False
+
+    def _drop_cursor(self):
+        r = self.txt.tag_ranges("cursor")
+        if r:
+            self.txt.delete(r[0], r[-1])
+
+    def _copy_selection(self, event=None):
+        try:
+            text = self.txt.get("sel.first", "sel.last")
+        except tk.TclError:
+            return "break"                  # nothing selected: nothing to copy
+        if text:
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+            self._flash("copied " + short_num(len(text)) + " characters")
+        return "break"
+
+    def _copy_all(self):
+        text = self.txt.get("1.0", "end-1c")
+        if text.strip():
+            self.root.clipboard_clear()
+            self.root.clipboard_append(text)
+            self._flash("copied the whole transcript (" + short_num(len(text)) + " characters)")
+
+    def _flash(self, message):
+        """a word in the status line for a moment, so a copy is not silent"""
+        try:
+            self.status_lbl.configure(text=message, fg=ACCENT)
+        except tk.TclError:
+            return
+
+        def back():
+            try:
+                self.status_lbl.configure(fg=FAINT)
+            except tk.TclError:
+                return
+            self._update_status()
+
+        self.root.after(1600, back)
+
+    def _select_all(self, event=None):
+        self.txt.tag_add("sel", "1.0", "end-1c")
+        self.txt.mark_set("insert", "1.0")
+        return "break"
+
+    def _text_menu(self, event):
+        """right click in the transcript: copy what is selected, or everything"""
+        menu = tk.Menu(self.root, tearoff=0, bg=CARD, fg=TEXT, activebackground=SELECT,
+                       activeforeground=TEXT, relief="flat", bd=1)
+        menu.add_command(label="Copy", command=self._copy_selection)
+        menu.add_command(label="Copy everything", command=self._copy_all)
+        menu.add_separator()
+        menu.add_command(label="Select all", command=self._select_all)
+        try:
+            menu.tk_popup(event.x_root, event.y_root)
+        finally:
+            menu.grab_release()
+        return "break"
+
     def _scrolled(self, event=None):
         self.root.after(30, self._check_follow)
 
@@ -943,6 +1056,12 @@ class Gui:
                 self.txt.see("end-1c")
             except tk.TclError:
                 pass
+
+    def _entry_select_all(self, event=None):
+        self.entry.tag_add("sel", "1.0", "end-1c")
+        self.entry.mark_set("insert", "1.0")
+        self.entry.see("insert")
+        return "break"
 
     def _on_shift_return(self, event):
         try:
@@ -1036,8 +1155,8 @@ class Gui:
                 pass
             except BaseException:
                 traceback.print_exc(file=self.real_err)
-        if self.live and self.live.get("dirty"):
-            self._flush_live()
+        if self.live and self.live.get("dirty") and not self._has_selection():
+            self._flush_live()        # (a selection: wait, so what was selected stays selected)
 
     def _on_print(self, text, end):
         """one print() from the harness, sorted into what it is"""
@@ -1151,6 +1270,7 @@ class Gui:
             t.tag_configure(hdr, font=self.F["mono_s"], foreground="#7A6A58", spacing1=10)
         self.blocks[n] = {"kind": kind, "hdr": hdr, "body": body, "open": False, "label": ""}
         t.tag_bind(hdr, "<Button-1>", lambda e, i=n: self._toggle(i))
+        t.tag_raise("sel")
         return n
 
     def _set_header(self, n):
@@ -1168,11 +1288,10 @@ class Gui:
     def _toggle(self, n):
         b = self.blocks.get(n)
         if not b:
-            return "break"
+            return
         b["open"] = not b["open"]
         self.txt.tag_configure(b["body"], elide=not b["open"])
-        self._set_header(n)
-        return "break"
+        self._set_header(n)          # no "break": the click may also start a selection, that is fine
 
     def _add_tool(self, name, args):
         n = self._new_block("tool")
@@ -1272,7 +1391,8 @@ class Gui:
             t.delete(live["mark"], "end-1c")
             render_markdown(t, live["text"])
             if not done:
-                t.insert("end-1c", " ▌", ("body",))
+                t.insert("end-1c", " ▌", ("body", "cursor"))
+                t.tag_raise("sel")
             # the mark stays where it is: right after deleting, that IS the spot to draw the answer again
         else:
             new = live["text"][live["shown"]:]
@@ -1284,7 +1404,11 @@ class Gui:
     def _end_block(self):
         if not self.live:
             return
-        self._flush_live(done=True)
+        if self._has_selection() and not self.live["dirty"]:
+            # everything is drawn already: only the cursor has to go, so the reader keeps what they selected
+            self._drop_cursor()
+        else:
+            self._flush_live(done=True)
         if self.live["kind"] == "thinking":
             n = self.live["n"]
             b = self.blocks[n]
@@ -1345,6 +1469,7 @@ class Gui:
         self.txt.tag_configure(tag, font=self.F["small_italic"], foreground=ACCENT,
                                spacing1=10, spacing3=12)
         self.txt.tag_bind(tag, "<Button-1>", lambda e, s=start: self._draw_history(0, anchor=s))
+        self.txt.tag_raise("sel")
         self.txt.insert("end-1c", "▸  " + str(start) + " earlier messages - click to bring them in\n", (tag,))
 
     def _draw_step(self):
