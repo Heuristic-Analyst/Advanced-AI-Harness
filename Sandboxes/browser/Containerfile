@@ -1,0 +1,49 @@
+# the browser sandbox: Chromium, driven by agent-browser, on a screen the user can watch (noVNC).
+# the code that drives it is NOT in here: it is the Browser project (Shared Folder/Browser), which the harness mounts
+# read-only. this image only holds the programs. Debian, because its chromium works on x86 and ARM alike (Linux, Mac,
+# Windows hosts). the first build downloads about 700 MB.
+FROM docker.io/library/debian:trixie-slim
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=C.UTF-8
+
+# chromium                          the browser
+# fonts-*                           so pages don't show empty boxes
+# xvfb, fluxbox                     a virtual screen to draw on, and a small window manager
+# x11vnc, novnc, websockify         that screen as a web page the user can open ("view" in sandbox.json)
+# nodejs, npm                       to install agent-browser
+# python3                           runs the browser kit, and the harness's "view" door
+# poppler-utils                     pdftotext: pdfs to text
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        chromium \
+        fonts-liberation fonts-noto-core fonts-noto-color-emoji \
+        xvfb fluxbox \
+        x11vnc novnc websockify \
+        nodejs npm \
+        python3 \
+        poppler-utils \
+        ca-certificates curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# agent-browser, a fixed version (github.com/vercel-labs/agent-browser). installed OUTSIDE the PATH on purpose: it is
+# only started through the `browser` command, which starts it the right way for this harness
+RUN npm install --prefix /opt/agent-browser agent-browser@0.39.4 \
+    && npm cache clean --force \
+    && /opt/agent-browser/node_modules/.bin/agent-browser --help > /dev/null
+
+# the screen's web page opens the screen right away
+RUN rm -f /usr/share/novnc/index.html \
+    && echo '<meta http-equiv="refresh" content="0; url=vnc.html?autoconnect=1&resize=scale&reconnect=1">' \
+       > /usr/share/novnc/index.html
+
+# the `browser` command: runs the kit in the Browser project
+RUN printf '%s\n' \
+        '#!/bin/sh' \
+        'if [ ! -f /workspace/Browser/browser.py ]; then' \
+        '  echo "the Browser project is not mounted. mount_project Browser, then try again"; exit 1' \
+        'fi' \
+        'exec python3 -I -B /workspace/Browser/browser.py "$@"' \
+        > /usr/local/bin/browser \
+    && chmod 755 /usr/local/bin/browser
+
+WORKDIR /workspace

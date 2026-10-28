@@ -1,0 +1,5 @@
+{
+  "_about": "settings of the browser sandbox. a browser needs more memory than the default 2g. view: the browser's screen (noVNC), which you open with the link /sandbox shows",
+  "memory": "4g",
+  "view": 6080
+}

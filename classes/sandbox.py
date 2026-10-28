@@ -6,16 +6,21 @@
 #   - each folder in Sandboxes/ is one sandbox, and its Containerfile is all there is. opening a sandbox builds an IMAGE
 #     from that file (podman's cache makes this quick when nothing changed) and starts a CONTAINER from it: a throwaway
 #     copy that is deleted when it stops. nothing installed at runtime survives a stop
+#   - a sandbox may have settings next to its Containerfile: sandbox.json, written by YOU (memory, cpus, gpu, view).
+#     the agent can't change them: Sandboxes/ is never mounted into a sandbox, and no tool writes there. see settings()
 #   - every running main.py (an "instance") has at most one container, opened and closed by the agent with its tools
 #   - a container sees only these folders of your computer, all mounted noexec (nothing in them can be run directly
 #     from inside, only through an interpreter, e.g. python x.py) and nosuid, nodev:
 #       Shared Folder/Common            -> /workspace/Common           always, read-write, shared by every instance
 #       Shared Folder/Notebook_Engine   -> /workspace/Notebook_Engine  always, READ-ONLY: the notebook engine's code
-#       Shared Folder/<project>         -> /workspace/<project>        at most one, mounted by the agent. while this
-#                                                                      instance has it, no other instance can mount it
+#       Shared Folder/<project>         -> /workspace/<project>        as many as the agent mounts. while this instance
+#                                                                      has one, no other instance can mount it
+#     a READ-ONLY project (READONLY_PROJECTS in config.py, e.g. Browser) is mounted read-only, except the subfolders
+#     named there (e.g. Browser/tmp). no tool creates, renames or deletes it
+#   - "view" (sandbox.json): a port inside the sandbox you can open in your own browser, through classes/relay.py
 #   - the network is OFF whenever the agent opens a sandbox. only you can switch it on (/sandbox net on)
 #   - podman can't add or remove a folder of a running container, so mounting or unmounting a project restarts it
-#   - every container carries labels: which instance started it, which sandbox, which project, which copy of this
+#   - every container carries labels: which instance started it, which sandbox, which projects, which copy of this
 #     program. that is how an instance finds its own container, and how the leftovers of a crashed instance are found
 #     and removed. containers you start yourself have no such labels and are never touched
 #   - who has which project is decided by a lock (functions/locks.py): taking it is one step, so two instances can never
@@ -32,15 +37,18 @@ import hashlib
 import threading
 import subprocess
 from functions import locks
+from classes.relay import Relay
 
 PROJECT_NAME = r"[A-Za-z0-9][A-Za-z0-9._-]*"           # what a project folder must be called to be used by the tools
 SANDBOX_NAME = r"[a-z0-9]+(-[a-z0-9]+)*"                # what podman accepts in an image name: lowercase, digits, -
 NETWORK = "podman"                                      # podman's own network. connected = internet, disconnected = none
+SETTINGS = "sandbox.json"                               # Sandboxes/<name>/sandbox.json: that sandbox's settings (optional)
+MEMORY = r"[1-9][0-9]*[kmgKMG]"                         # a memory size podman understands: 512m, 4g
 
 
 class Sandbox:
     def __init__(self, sandboxes_dir, shared_dir, common, engine, instance, command="podman",
-                 memory="2g", cpus="2", pids=512, timeout=600):
+                 memory="2g", cpus="2", pids=512, timeout=600, readonly=None):
         self.sandboxes_dir = sandboxes_dir     # Sandboxes/: one folder with a Containerfile per sandbox
         self.shared_dir = shared_dir           # Shared Folder/: the only folder of your computer a sandbox sees parts of
         self.shared_id = os.path.realpath(shared_dir)   # written on every container: two copies of this program on one
@@ -49,13 +57,16 @@ class Sandbox:
         self.engine = engine                   # "Notebook_Engine": always mounted, read-only
         self.instance = instance               # this instance's id (config.INSTANCE)
         self.command = command                 # "podman"
-        self.memory = memory                   # limits for the container
+        self.memory = memory                   # limits for the container, unless its sandbox.json says otherwise
         self.cpus = cpus
         self.pids = pids
         self.timeout = timeout                 # seconds a command may run inside
+        self.readonly = readonly or {}         # the read-only projects: name -> the subfolders in it that are writable
+                                               # (config.READONLY_PROJECTS)
         self.container = None                  # this instance's container, e.g. harness-python-48213-2026...-1. None = none
         self.name = None                       # its sandbox, e.g. "python"
-        self.project = None                    # the mounted project, e.g. "website". None = none
+        self.projects = []                     # the mounted projects, in the order they were mounted, e.g. ["website"]
+        self.relay = None                      # the door for your browser into the sandbox ("view"). made when first needed
         self.network = False                   # internet on? off whenever the agent opens a sandbox. only you switch it on
         self.notebooks = {}                    # the open notebooks: "Common/sales.ipynb" -> its lock name
         self.notes = []                        # what YOU changed with /sandbox: told to the model with your next message
@@ -87,13 +98,31 @@ class Sandbox:
     def engine_ready(self):
         return os.path.isfile(os.path.join(self.folder(self.engine), "client.py"))
 
-    def workdir(self):
-        """where commands start inside: the project if one is mounted, otherwise Common"""
-        return "/workspace/" + (self.project or self.common)
+    def writable_projects(self):
+        """the mounted projects the agent can write in: all but the read-only ones"""
+        return [p for p in self.projects if self.readonly_of(p) is None]
 
-    def volume(self, folder, options):
-        """the --volume value for one folder of Shared Folder. noexec: nothing in it can be run directly from inside"""
-        return self.folder(folder) + ":/workspace/" + folder + ":" + options + ",noexec,nosuid,nodev"
+    def workdir(self):
+        """where commands start inside: the first mounted project it can write in, otherwise Common"""
+        writable = self.writable_projects()
+        return "/workspace/" + (writable[0] if writable else self.common)
+
+    def volume(self, host, inside, options):
+        """the --volume value for one folder. noexec: nothing in it can be run directly from inside"""
+        return host + ":" + inside + ":" + options + ",noexec,nosuid,nodev"
+
+    def project_volumes(self, project):
+        """the --volume arguments for one project. a read-only project: the folder read-only, then each of its writable
+        subfolders read-write on top of it (created first, so there is something to mount)"""
+        subfolders = self.readonly_of(project)
+        if subfolders is None:                             # a normal project: all of it read-write, only this container
+            return ["--volume", self.volume(self.folder(project), "/workspace/" + project, "Z,rw")]
+        args = ["--volume", self.volume(self.folder(project), "/workspace/" + project, "Z,ro")]
+        for sub in subfolders:
+            os.makedirs(os.path.join(self.folder(project), sub), exist_ok=True)
+            args += ["--volume", self.volume(os.path.join(self.folder(project), sub),
+                                             "/workspace/" + project + "/" + sub, "Z,rw")]
+        return args
 
     # --- the sandboxes: the folders in Sandboxes/ ---
     def sandboxes(self):
@@ -102,8 +131,11 @@ class Sandbox:
         if os.path.isdir(self.sandboxes_dir):
             for name in sorted(os.listdir(self.sandboxes_dir)):
                 if os.path.isfile(os.path.join(self.sandboxes_dir, name, "Containerfile")):
-                    found[name] = None if re.fullmatch(SANDBOX_NAME, name) else \
-                        "can't be used: a sandbox's folder name must be lowercase letters, digits and - (the user can rename it)"
+                    if not re.fullmatch(SANDBOX_NAME, name):
+                        found[name] = ("can't be used: a sandbox's folder name must be lowercase letters, digits and - "
+                                       "(the user can rename it)")
+                    else:
+                        found[name] = self.settings(name)[1]     # None, or what is wrong with its sandbox.json
         return found
 
     def names(self):
@@ -116,9 +148,62 @@ class Sandbox:
         with open(os.path.join(self.sandboxes_dir, name, "Containerfile"), encoding="utf-8", errors="replace") as f:
             return f.read().strip()
 
+    # --- a sandbox's settings: Sandboxes/<name>/sandbox.json, written by you, never by the agent ---
+    def settings(self, name):
+        """(the settings, None), or ({}, what is wrong). no file: ({}, None) = the defaults from config.py.
+        only these keys, each checked, so nothing else can ever reach podman through this file:
+            memory  "4g"     how much memory it may use (default SANDBOX_MEMORY in config.py)
+            cpus    4        how many CPU cores it may use (default SANDBOX_CPUS)
+            gpu     true     it gets the computer's NVIDIA GPUs (needs the NVIDIA Container Toolkit, see Sandboxes/)
+            view    6080     a port inside it that you can open in your browser (see classes/relay.py)
+        keys starting with _ are notes for you, and are skipped"""
+        path = os.path.join(self.sandboxes_dir, name, SETTINGS)
+        if not os.path.isfile(path):
+            return {}, None
+        where = "Sandboxes/" + name + "/" + SETTINGS
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+        except ValueError as e:
+            return {}, "can't be used: " + where + " is not valid JSON (" + str(e) + "). the user must fix it"
+        except OSError as e:
+            return {}, "can't be used: " + where + " can't be read (" + str(e) + ")"
+        if not isinstance(data, dict):
+            return {}, "can't be used: " + where + " must be one {...} with settings. the user must fix it"
+        problems = []
+        for key, value in data.items():
+            if key.startswith("_"):
+                continue
+            if key == "memory":
+                if not (isinstance(value, str) and re.fullmatch(MEMORY, value)):
+                    problems.append('"memory" must be like "4g" or "512m"')
+            elif key == "cpus":
+                if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+                    problems.append('"cpus" must be a number above 0, like 4')
+            elif key == "gpu":
+                if not isinstance(value, bool):
+                    problems.append('"gpu" must be true or false')
+            elif key == "view":
+                if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 65535:
+                    problems.append('"view" must be a port number, like 6080')
+            else:
+                problems.append('"' + key + '" is not a setting (there are: memory, cpus, gpu, view)')
+        if problems:
+            return {}, "can't be used: " + where + ": " + "; ".join(problems) + ". the user must fix it"
+        return {k: v for k, v in data.items() if not k.startswith("_")}, None
+
+    def describe_settings(self, settings, short=False):
+        """the settings in words, for check_sandbox and (short) /sandbox"""
+        parts = ["memory " + settings.get("memory", self.memory), "cpus " + str(settings.get("cpus", self.cpus)),
+                 "GPU " + ("yes" if settings.get("gpu") else "no")]
+        if settings.get("view"):
+            parts.append("view: port " + str(settings["view"])
+                         + ("" if short else " inside can be opened by the user in their own browser"))
+        return ", ".join(parts)
+
     # --- every container of this program, in any instance: found by their labels ---
     def containers(self):
-        """the containers this copy of the program started, in any instance: [{"name", "owner", "sandbox", "project"}]"""
+        """the containers this copy of the program started, in any instance: [{"name", "owner", "sandbox", "projects"}]"""
         code, out = self.podman("ps", "--all", "--filter", "label=harness.owner", "--format", "json", timeout=60)
         if code != 0 or not out:
             return []
@@ -132,7 +217,8 @@ class Sandbox:
             if labels.get("harness.shared") != self.shared_id:   # another copy of this program: not ours to touch
                 continue
             found.append({"name": (c.get("Names") or [""])[0], "owner": labels.get("harness.owner", ""),
-                          "sandbox": labels.get("harness.sandbox", ""), "project": labels.get("harness.project", "")})
+                          "sandbox": labels.get("harness.sandbox", ""),
+                          "projects": [p for p in labels.get("harness.projects", "").split(",") if p]})
         return found
 
     def cleanup(self):
@@ -152,64 +238,87 @@ class Sandbox:
             return "the build of " + name + " failed. the end of its output:\n" + out[-2000:]
         return None
 
-    def start(self, name, project):
-        """start a new container of this sandbox, with Common, the engine and (if given) the project mounted.
-        the caller holds the project's lock. returns None if it runs, otherwise why not"""
+    def start(self, name, projects):
+        """start a new container of this sandbox, with Common, the engine and the projects mounted, and the settings of
+        its sandbox.json. the caller holds the projects' locks. returns None if it runs, otherwise why not"""
+        settings, problem = self.settings(name)
+        if problem:
+            return name + " " + problem
         self.cleanup()
         problem = self.build(name)
         if problem:
             return problem
         os.makedirs(self.folder(self.common), exist_ok=True)
+        memory = settings.get("memory", self.memory)
         self.starts += 1
         container = "harness-" + name + "-" + self.instance + "-" + str(self.starts)   # never clashes with another
         args = ["run", "--detach", "--rm", "--name", container,                        # --rm: deleted when it stops
                 "--label", "harness.owner=" + self.instance,
                 "--label", "harness.sandbox=" + name,
                 "--label", "harness.shared=" + self.shared_id,
+                "--label", "harness.projects=" + ",".join(projects),
                 "--network", NETWORK,                  # born on the network, sealed right below (only podman's network
                                                        # can be switched later; a container born without one can't)
                 "--entrypoint", "sleep",               # the only thing that runs inside until a command comes: nothing
                                                        # can use the network before it is sealed
                 "--security-opt", "no-new-privileges", # no way to gain more rights than it starts with
                 "--init",                              # a tiny first process that cleans up ended background programs
-                "--pids-limit", str(self.pids), "--memory", self.memory, "--cpus", self.cpus,
-                "--volume", self.volume(self.common, "z,rw")]   # z = other containers may share it
+                "--pids-limit", str(self.pids), "--memory", memory, "--cpus", str(settings.get("cpus", self.cpus)),
+                "--shm-size", memory,                  # /dev/shm (shared memory, used by browsers and pytorch): as big as
+                                                       # the memory limit. it can't use more anyway: it counts towards it
+                "--volume", self.volume(self.folder(self.common), "/workspace/" + self.common, "z,rw")]   # z = other
+                                                       # containers may share it
+        if settings.get("gpu"):                        # the NVIDIA GPUs, through CDI (the NVIDIA Container Toolkit)
+            args += ["--device", "nvidia.com/gpu=all"]
         if self.engine_ready():                        # missing: the sandbox still works, only notebooks don't
-            args += ["--volume", self.volume(self.engine, "z,ro")]   # ro = read-only: the agent can't change the engine
-        if project:
-            args += ["--label", "harness.project=" + project,
-                     "--volume", self.volume(project, "Z,rw")]          # Z = only this container
-        args += ["--workdir", "/workspace/" + (project or self.common), self.image(name), "infinity"]   # sleep infinity
+            args += ["--volume", self.volume(self.folder(self.engine), "/workspace/" + self.engine, "z,ro")]   # ro =
+                                                       # read-only: the agent can't change the engine
+        for project in projects:                       # Z = only this container
+            args += self.project_volumes(project)
+        writable = [p for p in projects if self.readonly_of(p) is None]
+        args += ["--workdir", "/workspace/" + (writable[0] if writable else self.common), self.image(name), "infinity"]
         code, out = self.podman(*args, timeout=180)
         if code != 0:
+            if settings.get("gpu") and re.search(r"cdi|nvidia", out, re.IGNORECASE):
+                return (name + " asks for the GPU (\"gpu\": true in Sandboxes/" + name + "/" + SETTINGS + "), but podman "
+                        "can't give it: the NVIDIA Container Toolkit is not set up on this computer (see "
+                        "Sandboxes/README.md). tell the user. podman said: " + out[-800:])
             return "could not start " + name + ": " + out[-1500:]
         self.container = container
         self.name = name
-        self.project = project
+        self.projects = list(projects)
         self.lost = None
         if not self.set_network(self.network):         # off (or on again after a restart, if you had switched it on)
             self.stop()
             return ("the sandbox was stopped again, because its network could not be switched "
                     + ("on" if self.network else "off") + ". tell the user")
+        if settings.get("view"):                       # the door for your browser: made once, then only pointed
+            if not self.relay:
+                self.relay = Relay(self.command)
+            self.relay.point(container, settings["view"])
         return None
 
-    def stop(self):
+    def stop(self, keep=()):
+        """stop the container. keep: projects whose locks stay held (a restart mounts them again)"""
         if self.container:
             code, out = self.podman("stop", "--time", "2", self.container, timeout=60)   # deleted by itself (--rm)
             if code != 0:
                 self.podman("rm", "--force", self.container, timeout=60)
-        self.forget()
+        self.forget(keep)
 
-    def forget(self):
-        """this instance has no container anymore: its project and its notebooks are free again"""
-        if self.project:
-            locks.release(self.project_lock(self.project))
+    def forget(self, keep=()):
+        """this instance has no container anymore: its projects (except keep) and its notebooks are free again"""
+        for project in self.projects:
+            if project not in keep:
+                locks.release(self.project_lock(project))
         for lock in list(self.notebooks.values()):    # the kernels died with the container
             locks.release(lock)
         self.notebooks.clear()
+        if self.relay:                                 # the door leads nowhere until a sandbox with "view" starts
+            self.relay.point(None, None)
         self.container = None
         self.name = None
-        self.project = None
+        self.projects = []
 
     def running(self):
         """the sandbox running in this instance, or None. asked from podman, so one that died meanwhile is noticed"""
@@ -282,11 +391,17 @@ class Sandbox:
         return "back in the chat"
 
     def shutdown(self):
-        """at exit: stop this instance's container. its project is free again. nothing to save"""
+        """at exit: stop this instance's container and the door into it. its projects are free again. nothing to save"""
         with self.lock:
             if self.container:
                 print("[sandbox] stopping " + self.name)
                 self.stop()
+            if self.relay:
+                self.relay.close()
+
+    def view_url(self):
+        """where you can open the running sandbox's "view" in your browser, or None"""
+        return self.relay.url() if self.relay and self.container else None
 
     # --- projects: the folders directly in Shared Folder, except Common and Notebook_Engine ---
     def project_lock(self, name):
@@ -295,7 +410,19 @@ class Sandbox:
     def reserved(self, name):
         return name.lower() in (self.common.lower(), self.engine.lower())
 
-    def projects(self):
+    def readonly_of(self, name):
+        """a read-only project: the list of its writable subfolders (maybe empty). a normal project: None"""
+        for project, subfolders in self.readonly.items():
+            if project.lower() == name.lower():
+                return list(subfolders)
+        return None
+
+    def readonly_text(self, name):
+        subfolders = self.readonly_of(name)
+        writable = ", ".join(name + "/" + sub + "/" for sub in subfolders)
+        return "read-only for you" + (", except " + writable if writable else "")
+
+    def projects_of_disk(self):
         """the project folders. links to folders elsewhere are not projects: a sandbox could reach outside through them"""
         found = []
         if os.path.isdir(self.shared_dir):
@@ -320,12 +447,20 @@ class Sandbox:
             return "invalid project name: letters, digits, - _ . only, at most 60 characters, e.g. sales-2026"
         return None
 
+    def readonly_problem(self, name, what):
+        """None for a normal project. a read-only one: why the agent can't create, rename or delete it"""
+        for project in self.readonly:
+            if project.lower() == str(name).lower():
+                return (project + " is a read-only project: you can mount it and use it, but no tool can " + what
+                        + " it. only the user can, by hand")
+        return None
+
     def find_project(self, name):
         """(the existing project's real name, None), or (None, why not). the same name in another spelling is accepted"""
         problem = self.name_problem(name)
         if problem:
             return None, problem
-        existing = self.projects()
+        existing = self.projects_of_disk()
         if name in existing:
             return name, None
         same = [p for p in existing if p.lower() == name.lower()]
@@ -334,9 +469,16 @@ class Sandbox:
         return None, ("no project called '" + name + "'. projects: " + (", ".join(existing) or "none yet")
                       + ". create_project makes a new one")
 
+    def mounted(self, name):
+        """the mounted project with this name (in any spelling), or None"""
+        for project in self.projects:
+            if project.lower() == str(name).lower():
+                return project
+        return None
+
     def holder(self, project):
         """who has this project mounted: "you", "another instance", or None = it is free"""
-        if self.project and self.project.lower() == project.lower():
+        if self.mounted(project):
             return "you"
         if not locks.is_free(self.project_lock(project)):
             return "another instance"
@@ -347,18 +489,24 @@ class Sandbox:
         """one line: the state right now. the tools that change it end their answer with it"""
         if not self.container:
             return "[now: no sandbox runs]"
-        return ("[now: sandbox " + self.name + " runs, project " + (self.project or "none")
+        view = self.view_url()
+        return ("[now: sandbox " + self.name + " runs, projects " + (", ".join(self.projects) or "none")
                 + ", working folder " + self.workdir() + ", network " + ("on" if self.network else "off")
-                + ", open notebooks: " + (", ".join(self.notebooks) or "none") + "]")
+                + ", open notebooks: " + (", ".join(self.notebooks) or "none")
+                + (", view for the user: " + view if view else "") + "]")
 
     def where(self):
         """what the container sees, in words"""
         text = ("/workspace/" + self.common + " = Shared Folder/" + self.common + " (kept, shared with every other "
                 "instance); /workspace/" + self.engine + " = the notebook engine (read-only); ")
-        if self.project:
-            text += ("/workspace/" + self.project + " = Shared Folder/" + self.project + " (kept, your project, no other "
-                     "instance can mount it now); ")
-        else:
+        for project in self.projects:
+            if self.readonly_of(project) is None:
+                text += ("/workspace/" + project + " = Shared Folder/" + project + " (kept, your project, no other "
+                         "instance can mount it now); ")
+            else:
+                text += ("/workspace/" + project + " = Shared Folder/" + project + " (" + self.readonly_text(project)
+                         + ", no other instance can mount it now); ")
+        if not self.projects:
             text += "no project mounted; "
         return text + "everything else inside is gone when the sandbox stops"
 
@@ -368,18 +516,22 @@ class Sandbox:
         here = self.running()
         lines = ["Your sandbox: a throwaway Linux container where everything you run happens (sandbox_shell, notebooks). "
                  "You can't run anything on the user's computer. Inside it, only /workspace/" + self.common
-                 + " and a mounted project are kept; everything else is gone when it stops.",
+                 + " and the mounted projects are kept; everything else is gone when it stops.",
                  "As it was when this context started (tool results after this are newer):"]
         if here:
             lines.append("- running: " + here + ", working folder " + self.workdir())
-            lines.append("- project: " + (self.project + " mounted at /workspace/" + self.project if self.project
-                                          else "none mounted"))
+            lines.append("- projects: " + (", ".join(p + " at /workspace/" + p
+                                                     + ("" if self.readonly_of(p) is None
+                                                        else " (" + self.readonly_text(p) + ")")
+                                                     for p in self.projects) or "none mounted"))
             lines.append("- network: " + ("on" if self.network else "off (only the user can switch it on)"))
             lines.append("- open notebooks: " + (", ".join(self.notebooks) or "none"))
+            if self.view_url():
+                lines.append("- view: the user can watch at " + self.view_url() + " (in their own browser)")
         else:
             lines.append("- no sandbox runs. open one with open_sandbox when you need to run something")
         lines.append("- sandboxes: " + (", ".join(self.names()) or "none") + ". projects: "
-                     + (", ".join(self.projects()) or "none yet"))
+                     + (", ".join(self.projects_of_disk()) or "none yet"))
         return "\n".join(lines)
 
     def take_notes(self):
@@ -415,6 +567,9 @@ class Sandbox:
             lines.append("=== sandbox: " + each + " ===")
             if found[each]:
                 lines.append(found[each])
+            else:
+                lines.append("settings (set by the user in " + SETTINGS + ", you can't change them): "
+                             + self.describe_settings(self.settings(each)[0]))
             built = self.built_at(each)
             lines.append("image: " + ("built " + built if built else "not built yet: the first start builds it, "
                                                                        "which can take a while"))
@@ -426,8 +581,8 @@ class Sandbox:
             lines.append(self.containerfile(each) or "(empty)")
         return "\n".join(lines) + "\n\n" + self.status_line()
 
-    def open(self, name, project=None):
-        """open_sandbox: build and start this sandbox for this instance, optionally with a project mounted"""
+    def open(self, name, projects=None):
+        """open_sandbox: build and start this sandbox for this instance, optionally with projects mounted"""
         with self.lock:
             if not self.available():
                 return self.command + " is not installed or not running, so there are no sandboxes right now. tell the user"
@@ -440,90 +595,112 @@ class Sandbox:
                 return "no sandbox called '" + str(name) + "'. sandboxes: " + (", ".join(found) or "none")
             if found[name]:
                 return name + " " + found[name]
-            real = None
-            if project:
+            if isinstance(projects, str):              # one project as text: fine too
+                projects = [projects]
+            if projects is not None and not isinstance(projects, list):
+                return "projects must be a list of project names, e.g. [\"website\"]"
+            reals = []
+            for project in projects or []:
                 real, problem = self.find_project(project)
                 if problem:
                     return problem
+                if real not in reals:
+                    reals.append(real)
+            taken = []
+            for real in reals:                         # every lock, or none
                 if not locks.take(self.project_lock(real)):
-                    return (real + " is mounted by another instance right now. pick another project, or open the "
-                            "sandbox without one")
+                    for t in taken:
+                        locks.release(self.project_lock(t))
+                    return (real + " is mounted by another instance right now. leave it out, or pick another project "
+                            "(check_projects)")
+                taken.append(real)
             self.network = False                       # every sandbox the agent opens starts without internet
-            problem = self.start(name, real)
+            problem = self.start(name, reals)
             if problem:
-                if real:
+                for real in reals:
                     locks.release(self.project_lock(real))
                 return problem
             return "running " + name + ", network off. " + self.where() + "\n" + self.status_line()
 
     def close(self):
-        """close_sandbox: stop it. its project is free for other instances again"""
+        """close_sandbox: stop it. its projects are free for other instances again"""
         with self.lock:
             here = self.running()
             if not here:
                 return self.not_running()
-            project = self.project
+            projects = list(self.projects)
             self.stop()
             answer = ("stopped " + here + ". everything installed or started inside is gone; the files in "
-                      "Shared Folder/" + self.common + (" and Shared Folder/" + project if project else "") + " stay")
-            if project:
-                answer += ". " + project + " is free for other instances again"
+                      "Shared Folder/" + self.common + "".join(" and Shared Folder/" + p for p in projects) + " stay")
+            if projects:
+                answer += ". " + ", ".join(projects) + (" is" if len(projects) == 1 else " are") \
+                          + " free for other instances again"
             return answer + "\n" + self.status_line()
 
-    def restart(self, project):
-        """podman can't add or remove a folder of a running container: stop it and start a new one. the network stays"""
+    def restart(self, projects):
+        """podman can't add or remove a folder of a running container: stop it and start a new one with these projects.
+        their locks stay held through it; if it doesn't start again, they are given back. the network stays"""
         name = self.name
-        self.stop()                                    # releases the old project's lock
-        problem = self.start(name, project)
+        self.stop(keep=projects)                       # gives back only the locks of projects not in the new list
+        problem = self.start(name, projects)
         if problem:
+            for project in projects:
+                locks.release(self.project_lock(project))
             return "the sandbox was stopped, but could not start again: " + problem
         return ("restarted " + name + ": whatever was installed or started inside since its start is gone, open "
                 "notebooks were closed (nb_open them again). " + self.where())
 
     def mount(self, project):
-        """mount_project: mount one project (another one mounted is unmounted). restarts the sandbox"""
+        """mount_project: mount one more project (the ones mounted stay). restarts the sandbox"""
         with self.lock:
             if not self.running():
-                return "no sandbox runs in this instance. open_sandbox can mount the project right away"
+                return "no sandbox runs in this instance. open_sandbox can mount projects right away"
             real, problem = self.find_project(project)
             if problem:
                 return problem
-            if real == self.project:
-                return real + " is mounted already, at /workspace/" + real + "\n" + self.status_line()
+            if self.mounted(real):
+                return real + " is mounted already, at /workspace/" + self.mounted(real) + "\n" + self.status_line()
             if not locks.take(self.project_lock(real)):
                 return real + " is mounted by another instance right now. pick another project, or try again later"
-            old = self.project
-            answer = self.restart(real)
-            if not self.container:                     # it didn't start again: nothing holds the new project
-                locks.release(self.project_lock(real))
-            elif old:
-                answer = "unmounted " + old + " (free for other instances again), mounted " + real + ". " + answer
-            else:
+            answer = self.restart(self.projects + [real])
+            if self.container:
                 answer = "mounted " + real + ". " + answer
             return answer + "\n" + self.status_line()
 
-    def unmount(self):
-        """unmount_project: unmount the project. restarts the sandbox"""
+    def unmount(self, project=None):
+        """unmount_project: unmount one project (the others stay). restarts the sandbox"""
         with self.lock:
             if not self.running():
                 return self.not_running()
-            if not self.project:
+            if not self.projects:
                 return ("no project is mounted. (" + self.common + " and " + self.engine + " are always mounted, they "
                         "can't be unmounted)\n" + self.status_line())
-            old = self.project
-            return "unmounted " + old + ", it is free for other instances again. " + self.restart(None) + "\n" \
-                + self.status_line()
+            if project:
+                old = self.mounted(project)
+                if not old:
+                    return (str(project) + " is not mounted. mounted: " + ", ".join(self.projects) + "\n"
+                            + self.status_line())
+            elif len(self.projects) == 1:
+                old = self.projects[0]
+            else:
+                return ("several projects are mounted: " + ", ".join(self.projects) + ". say which one to unmount\n"
+                        + self.status_line())
+            rest = [p for p in self.projects if p != old]
+            answer = self.restart(rest)
+            if self.container:
+                answer = "unmounted " + old + ", it is free for other instances again. " + answer
+            return answer + "\n" + self.status_line()
 
     def check_projects(self):
         """check_projects: every project folder, and who has it mounted"""
-        lines = ["projects are the folders directly in the user's Shared Folder. a sandbox mounts one at a time, at "
-                 "/workspace/<project>, and while it does, no other instance can mount it.",
+        lines = ["projects are the folders directly in the user's Shared Folder. a sandbox can mount several, each at "
+                 "/workspace/<project>, and while it has one, no other instance can mount that one.",
                  self.common + " and " + self.engine + " are not projects: they are always mounted (" + self.engine
                  + " read-only), and no tool changes them."]
         if self.available():
             self.running()
             self.cleanup()                             # a crashed instance's container must not seem to hold anything
-        names = self.projects()
+        names = self.projects_of_disk()
         if not names:
             lines.append("projects: none yet. create_project makes one")
         else:
@@ -535,13 +712,15 @@ class Sandbox:
                 else:
                     state = {"you": "mounted by you", "another instance": "mounted by another instance, not available now",
                              None: "free"}[self.holder(name)]
+                    if self.readonly_of(name) is not None:
+                        state += ", " + self.readonly_text(name)
                 lines.append("- " + name + ": " + state)
         return "\n".join(lines) + "\n" + self.status_line()
 
     def create_project(self, name):
         """create_project: a new, empty folder Shared Folder/<name>"""
         with self.lock:
-            problem = self.name_problem(name)
+            problem = self.name_problem(name) or self.readonly_problem(name, "create")
             if problem:
                 return problem
             for existing in os.listdir(self.shared_dir) if os.path.isdir(self.shared_dir) else []:
@@ -549,7 +728,7 @@ class Sandbox:
                     return "'" + existing + "' exists already in Shared Folder: use it, or pick another name"
             os.makedirs(self.folder(name))
             return ("created project " + name + " (Shared Folder/" + name + "). mount_project mounts it, or open_sandbox "
-                    "with project=" + name + "\n" + self.status_line())
+                    "with projects=[\"" + name + "\"]\n" + self.status_line())
 
     def rename_project(self, name, new_name):
         """rename_project: rename a project folder nobody has mounted"""
@@ -557,13 +736,14 @@ class Sandbox:
             real, problem = self.find_project(name)
             if problem:
                 return problem
-            problem = self.name_problem(new_name)
+            problem = (self.readonly_problem(real, "rename") or self.name_problem(new_name)
+                       or self.readonly_problem(new_name, "create"))
             if problem:
                 return problem
             for existing in os.listdir(self.shared_dir):
                 if existing.lower() == new_name.lower() and existing != real:
                     return "'" + existing + "' exists already in Shared Folder: pick another name"
-            if real == self.project:
+            if self.mounted(real):
                 return real + " is mounted in your sandbox: unmount_project first, then rename it"
             if self.available():
                 self.cleanup()                         # a crashed instance's container must not keep it mounted
@@ -581,7 +761,10 @@ class Sandbox:
             real, problem = self.find_project(name)
             if problem:
                 return problem
-            if real == self.project:
+            problem = self.readonly_problem(real, "delete")
+            if problem:
+                return problem
+            if self.mounted(real):
                 return real + " is mounted in your sandbox: unmount_project first, then delete it"
             if self.available():
                 self.cleanup()
@@ -617,7 +800,10 @@ class Sandbox:
             return self.command + " is not installed or not running, so there are no sandboxes right now"
         here = self.running()
         self.cleanup()
-        lines = [self.status_line(), "sandboxes:"]
+        lines = [self.status_line()]
+        if self.view_url():
+            lines.append("view: open " + self.view_url() + " in your browser to watch (and take over)")
+        lines.append("sandboxes:")
         for name, problem in self.sandboxes().items():
             marks = ""
             if name == here:
@@ -627,8 +813,11 @@ class Sandbox:
                 marks += " (running in " + str(others) + " other instance(s))"
             if problem:
                 marks += " (" + problem + ")"
-            elif not self.built_at(name):
-                marks += " (not built yet)"
+            else:
+                if not self.built_at(name):
+                    marks += " (not built yet)"
+                if os.path.isfile(os.path.join(self.sandboxes_dir, name, SETTINGS)):
+                    marks += " [" + self.describe_settings(self.settings(name)[0], short=True) + "]"
             lines.append("  " + name + marks)
         if not self.sandboxes():
             lines.append("  none. a new sandbox: a folder in Sandboxes/ with a Containerfile inside")

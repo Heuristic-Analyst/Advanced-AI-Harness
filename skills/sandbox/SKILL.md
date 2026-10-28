@@ -10,7 +10,8 @@ The sandbox is a throwaway Linux container. Everything you run happens there, ne
 ## What is kept and what is not
 
 - `/workspace/Common` = the user's `Shared Folder/Common`. Kept. Every running instance of this program sees it too, so other instances may be working in it.
-- `/workspace/<project>` = the user's `Shared Folder/<project>`, if one is mounted. Kept. Only you can mount it while you have it.
+- `/workspace/<project>` = the user's `Shared Folder/<project>`, for every mounted project (several are fine). Kept. Only you can mount it while you have it.
+- A read-only project (e.g. `Browser`): you can use it, but only write in the subfolder `check_projects` names (e.g. `Browser/tmp`). No tool renames or deletes it.
 - `/workspace/Notebook_Engine` = the program that runs notebooks. Read-only: never put anything there.
 - Everything else inside (installed packages, files in /tmp or /root, running programs) is gone when the sandbox stops or restarts.
 - Files in /workspace can't be executed directly: run them with an interpreter (`python x.py`, `bash x.sh`).
@@ -18,8 +19,8 @@ The sandbox is a throwaway Linux container. Everything you run happens there, ne
 ## Steps
 
 1. **Look first.** Your system prompt says what ran when this context started; later tool results are newer. If unsure: `check_sandbox` (which sandbox runs, what each one contains) and `check_projects`.
-2. **Pick the project before you start.** Does the work belong to a project? Use an existing one, or `create_project` (only if none fits). Give it to `open_sandbox(name, project)` right away: `mount_project` and `unmount_project` restart the sandbox, which loses installs, running programs and open notebooks. No project: work in `/workspace/Common`.
-3. **Pick the sandbox by its Containerfile.** It is exactly what you get. Notebooks need one with python3 (e.g. `python`).
+2. **Pick the project before you start.** Does the work belong to a project? Use an existing one, or `create_project` (only if none fits). Give every project the work needs to `open_sandbox(name, projects=[...])` right away: `mount_project` and `unmount_project` restart the sandbox, which loses installs, running programs and open notebooks. The first project you can write in is the working folder. No project: work in `/workspace/Common`.
+3. **Pick the sandbox by its Containerfile and settings.** It is exactly what you get. Notebooks need one with python3 (e.g. `python`). Its settings come from the user: memory, a GPU (`gpu: yes`), a "view" the user can watch. You can't change them; if a task needs more, tell the user.
 4. **Work with sandbox_shell.** Small steps, read what each command prints. Big output: write it to a file in /workspace and search it with grep, instead of printing it all.
 5. **Long jobs** (over the time limit): start them in the background with their output in a file, `nohup python job.py > job.log 2>&1 &`, then check the file.
 6. **When done**, tell the user where the results are, as paths on their computer: `Shared Folder/<project>/...` or `Shared Folder/Common/...`.

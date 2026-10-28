@@ -1,0 +1,5 @@
+{
+  "_about": "settings of the ai-lab sandbox. gpu: your NVIDIA GPUs (set up once, see Sandboxes/README.md). memory: raise it if your computer can spare more. cpus can be added too, e.g. \"cpus\": 6, but not more than your computer has",
+  "gpu": true,
+  "memory": "8g"
+}

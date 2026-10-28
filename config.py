@@ -16,18 +16,23 @@ SANDBOXES_DIR = os.path.join(HERE, "Sandboxes")      # Sandboxes/<name>/Containe
 SHARED_DIR = os.path.join(HERE, "Shared Folder")     # the ONLY folder of your computer a sandbox sees parts of:
 COMMON = "Common"                                    #   Shared Folder/Common: mounted in every sandbox, always
 ENGINE = "Notebook_Engine"                           #   Shared Folder/Notebook_Engine: the notebook engine, mounted read-only
-                                                     #   Shared Folder/<project>: one project at a time, mounted by the agent
+                                                     #   Shared Folder/<project>: the projects, mounted by the agent
+READONLY_PROJECTS = {"Browser": ["tmp"]}             # projects the agent may mount and use, but never change, rename
+                                                     # or delete: name -> the subfolders in it it may write in.
+                                                     # Browser = the browser kit: only Browser/tmp is writable
 LOCKS_DIR = os.path.join(HERE, "Locks")              # "in use" signs of the running instances (functions/locks.py)
 
 # This running main.py (an "instance"): its process number and when it started. you can run several at once, each
 # with its own sandbox. the time keeps it unique: after a restart, another program may get the same process number
 INSTANCE = str(os.getpid()) + "-" + datetime.datetime.now().strftime("%Y%m%d%H%M%S")   # e.g. 48213-20261025161304
 
-# Sandbox (see classes/sandbox.py). limits for a running sandbox, so a runaway script can't take your computer down
+# Sandbox (see classes/sandbox.py). limits for a running sandbox, so a runaway script can't take your computer down.
+# one sandbox can have its own memory and cpus: Sandboxes/<name>/sandbox.json (see Sandboxes/README.md)
 CONTAINER_CMD = "podman"   # the container program. podman is rootless: "root" inside the sandbox is just you outside
 SANDBOX_MEMORY = "2g"      # memory a sandbox may use
 SANDBOX_CPUS = "2"         # CPU cores a sandbox may use
-SANDBOX_PIDS = 512         # processes a sandbox may have at once
+SANDBOX_PIDS = 2048        # processes (and threads) a sandbox may have at once. stops a runaway script that copies
+                           # itself; a browser or pytorch alone use several hundred threads
 COMMAND_TIMEOUT = 600      # seconds a command in the sandbox (sandbox_shell, a notebook call) may run, then it is stopped
 
 # Model settings: read the file once, then take what we need from it

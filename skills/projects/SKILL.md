@@ -22,7 +22,7 @@ So a project keeps a scratchpad: `PROJECT.md` at its root. It holds what a fresh
 ## The first thing in a new conversation
 
 1. Your system prompt says what runs and which projects exist, as of when this context started. Read it before anything else.
-2. `check_projects` (which project is free to mount), then get it in: `open_sandbox` opens a sandbox and mounts the project in one step, or `mount_project` if a sandbox already runs.
+2. `check_projects` (which project is free to mount), then get it in: `open_sandbox` opens a sandbox and mounts the projects in one step (`projects=[...]`, add `Browser` if you will need the web), or `mount_project` if a sandbox already runs.
 3. Read the notes before touching anything:
    sandbox_shell: `cat /workspace/<project>/PROJECT.md; ls -la /workspace/<project>`
 4. Nothing there, but the folder already has work in it: write the scratchpad from what is actually on disk (find, read the files) before you change a thing. The next conversation needs that baseline.

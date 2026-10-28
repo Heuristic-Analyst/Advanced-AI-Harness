@@ -16,10 +16,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # --- environment ---
+# HF_HOME: the downloaded models go into Common, so they are kept between starts (anywhere else in /workspace they
+# would be gone with every stop, and downloading needs the network, which is off by default)
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     PIP_NO_CACHE_DIR=1 \
-    HF_HOME=/workspace/.cache/huggingface \
+    HF_HOME=/workspace/Common/.cache/huggingface \
     TOKENIZERS_PARALLELISM=false
 
 # --- core data / science stack ---

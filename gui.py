@@ -675,7 +675,7 @@ class Gui:
             import config
             from config import (SOUL_FILE, TOOLS_DIR, SKILLS_DIR, SANDBOXES_DIR, SHARED_DIR, COMMON, ENGINE,
                                 INSTANCE, CONTAINER_CMD, SANDBOX_MEMORY, SANDBOX_CPUS, SANDBOX_PIDS,
-                                COMMAND_TIMEOUT, MODEL, EFFORT, CONTEXT_LIMIT)
+                                COMMAND_TIMEOUT, MODEL, EFFORT, CONTEXT_LIMIT, READONLY_PROJECTS)
             from classes.agent import Agent
             from classes.sandbox import Sandbox
             from functions.read_text import read_text
@@ -696,7 +696,7 @@ class Gui:
             locks.start()
             sandbox = Sandbox(SANDBOXES_DIR, SHARED_DIR, COMMON, ENGINE, INSTANCE, command=CONTAINER_CMD,
                               memory=SANDBOX_MEMORY, cpus=SANDBOX_CPUS, pids=SANDBOX_PIDS,
-                              timeout=COMMAND_TIMEOUT)
+                              timeout=COMMAND_TIMEOUT, readonly=READONLY_PROJECTS)
             import atexit
             atexit.register(locks.stop)
             atexit.register(sandbox.shutdown)
@@ -711,6 +711,7 @@ class Gui:
                     tools.pop(name)
                 skills.pop("sandbox", None)
                 skills.pop("notebook", None)
+                skills.pop("browser", None)
             if not skills:
                 tools.pop("load_skill", None)
 

@@ -10,17 +10,17 @@ Everything the agent can *do* is a tool, and every tool is one Python file in he
 | `checkpoint` | `basic/checkpoint.py` | Saves the model's checkpoint as `checkpoint.md`, empties the conversation and puts the checkpoint into the system prompt. Only works when the program asked for it: when the conversation got too full (`CHECKPOINT_AT`, `EMERGENCY_AT` in `config.py`). The log and the saved results stay. |
 | `read_result` | `results/read_result.py` | Shows **one** part of a saved result (see "Long results" below). Never more than one, so a huge result can't fill the context. |
 | `search_result` | `results/search_result.py` | `grep` for one saved result: every matching line with its part and line number. With grep's options: regex, ignore case, whole word, invert, lines before/after, only the matched piece, count, max count. |
-| `check_sandbox` | `sandbox/check_sandbox.py` | Every sandbox with its whole Containerfile, and which one runs here. Changes nothing. |
-| `open_sandbox` | `sandbox/open_sandbox.py` | Builds and starts a sandbox for this instance, network off, optionally with a project mounted right away. |
-| `close_sandbox` | `sandbox/close_sandbox.py` | Stops it. Its project is free for other instances again. |
+| `check_sandbox` | `sandbox/check_sandbox.py` | Every sandbox with its whole Containerfile and its settings (`sandbox.json`), and which one runs here. Changes nothing. |
+| `open_sandbox` | `sandbox/open_sandbox.py` | Builds and starts a sandbox for this instance, network off, optionally with projects mounted right away. |
+| `close_sandbox` | `sandbox/close_sandbox.py` | Stops it. Its projects are free for other instances again. |
 | `sandbox_shell` | `sandbox/sandbox_shell.py` | Runs a bash command inside, and returns what it printed. Stopped after `COMMAND_TIMEOUT` seconds. |
 | `check_projects` | `sandbox/check_projects.py` | The project folders: free, mounted here, or mounted by another running instance. |
 | `create_project` | `sandbox/create_project.py` | A new, empty folder `Shared Folder/<name>`. |
-| `mount_project` | `sandbox/mount_project.py` | Mounts one project at `/workspace/<name>`. Restarts the sandbox. |
-| `unmount_project` | `sandbox/unmount_project.py` | Unmounts it. Restarts the sandbox. |
-| `rename_project` | `sandbox/rename_project.py` | Renames a project folder nobody has mounted. |
-| `delete_project` | `sandbox/delete_project.py` | Deletes a project folder with everything in it, if nobody has it mounted. |
-| `nb_create` | `notebook/nb_create.py` | Makes a new notebook in `Common/` or the mounted project and starts its kernel. |
+| `mount_project` | `sandbox/mount_project.py` | Mounts one more project at `/workspace/<name>`; the others stay. Restarts the sandbox. |
+| `unmount_project` | `sandbox/unmount_project.py` | Unmounts one project; the others stay. Restarts the sandbox. |
+| `rename_project` | `sandbox/rename_project.py` | Renames a project folder nobody has mounted. Never a read-only one. |
+| `delete_project` | `sandbox/delete_project.py` | Deletes a project folder with everything in it, if nobody has it mounted. Never a read-only one. |
+| `nb_create` | `notebook/nb_create.py` | Makes a new notebook in `Common/` or a mounted project and starts its kernel. |
 | `nb_open` | `notebook/nb_open.py` | Opens an existing notebook (starting its kernel) and returns all of it. Already open? Its variables are kept. |
 | `nb_close` | `notebook/nb_close.py` | Stops a notebook's kernel. Its variables are gone, the file stays. |
 | `nb_add` | `notebook/nb_add.py` | Adds a code or markdown cell, at the end or after a given cell, optionally running it. |

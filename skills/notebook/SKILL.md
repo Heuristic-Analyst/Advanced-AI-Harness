@@ -5,7 +5,7 @@ description: Use when you work in a Jupyter notebook with the nb_* tools, for da
 
 # Notebooks
 
-A notebook is a .ipynb file in one of the user's folders (Common/ or the mounted project), made of cells. While it is open, a kernel runs in the sandbox and keeps every variable: what one cell creates, later cells can use. Every change is saved to the file right away, so the user can open it at any time.
+A notebook is a .ipynb file in one of the user's folders (Common/ or a mounted project you can write in), made of cells. While it is open, a kernel runs in the sandbox and keeps every variable: what one cell creates, later cells can use. Every change is saved to the file right away, so the user can open it at any time.
 
 ## When to use one
 

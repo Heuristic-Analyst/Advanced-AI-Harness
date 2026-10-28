@@ -16,7 +16,7 @@ from functions.load_skills import load_skills
 from functions import conversations
 from functions import locks
 
-SANDBOX_TOOLS = ("sandbox", "notebook")              # tool folders (in tools/) and skills that need podman
+SANDBOX_TOOLS = ("sandbox", "notebook", "browser")   # tool folders (in tools/) and skills that need podman
 
 
 def new_agent(name, messages=None):
@@ -63,7 +63,8 @@ if __name__ == "__main__":                           # runs only when you start 
     locks.start()                                    # this instance's own lock: the others see that it runs
     atexit.register(locks.stop)                      # runs LAST (atexit goes backwards): every lock is given back
     sandbox = Sandbox(SANDBOXES_DIR, SHARED_DIR, COMMON, ENGINE, INSTANCE, command=CONTAINER_CMD,
-                      memory=SANDBOX_MEMORY, cpus=SANDBOX_CPUS, pids=SANDBOX_PIDS, timeout=COMMAND_TIMEOUT)
+                      memory=SANDBOX_MEMORY, cpus=SANDBOX_CPUS, pids=SANDBOX_PIDS, timeout=COMMAND_TIMEOUT,
+                      readonly=READONLY_PROJECTS)
     atexit.register(sandbox.shutdown)                # whatever happens (also a crash in python), the sandbox is stopped
     if sandbox.available():
         workspace = sandbox                          # the agents get it

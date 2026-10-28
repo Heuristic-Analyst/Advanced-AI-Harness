@@ -14,7 +14,8 @@ import base64
 
 def resolve(sandbox, path):
     """the notebook's path as the engine needs it, e.g. "Common/sales.ipynb", and None. or None and what is wrong.
-    the first folder may be written in any spelling (common/ for Common/), but must be Common or the mounted project"""
+    the first folder may be written in any spelling (common/ for Common/), but must be Common or a mounted project the
+    agent can write in (not a read-only one)"""
     text = str(path).replace("\\", "/").strip()
     if text.startswith("/workspace/"):                 # "/workspace/Common/x.ipynb" means Common/x.ipynb
         text = text[len("/workspace/"):]
@@ -24,8 +25,8 @@ def resolve(sandbox, path):
         return None, ("the notebook must be a path ending in .ipynb inside " + allowed(sandbox)
                       + ", e.g. " + sandbox.common + "/analysis.ipynb, with no .. in it")
     folders = {sandbox.common.lower(): sandbox.common}
-    if sandbox.project:
-        folders[sandbox.project.lower()] = sandbox.project
+    for project in sandbox.writable_projects():
+        folders[project.lower()] = project
     real = folders.get(parts[0].lower())
     if not real:                                       # anywhere else it would be gone when the sandbox stops, and
         return None, "a notebook must be inside " + allowed(sandbox)   # Notebook_Engine is read-only
@@ -35,8 +36,8 @@ def resolve(sandbox, path):
 
 def allowed(sandbox):
     text = sandbox.common + "/..."
-    if sandbox.project:
-        text += " or " + sandbox.project + "/... (your mounted project)"
+    for project in sandbox.writable_projects():
+        text += " or " + project + "/... (a mounted project)"
     return text
 
 
