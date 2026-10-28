@@ -1,9 +1,7 @@
 # tools/sandbox/open_sandbox.py — build and start a sandbox for this instance. the logic is in classes/sandbox.py
 
 
-def run(agent, name, projects=None, project=None):
-    if project and not projects:                       # the old way, one project as text (older conversations): fine too
-        projects = [project]
+def run(agent, name, projects=None):
     return agent.sandbox.open(name, projects or None)
 
 
