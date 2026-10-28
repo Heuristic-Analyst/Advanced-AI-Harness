@@ -27,7 +27,7 @@ The sandbox is a throwaway Linux container. Everything you run happens there, ne
 
 ## Good to know
 
-- The network is off. Installing (`pip install`, `apt-get install`) needs it, and only the user can switch it on (`/sandbox net on`). Ask them, and say what you want to install. If a package is needed often, suggest adding it to the sandbox's Containerfile, so it is there at every start.
+- The network is off. Installing (`pip install`, `apt-get install`) needs it, and only the user can switch it on (`/sandbox net on`). Ask them, say what you want to install and stop, because the user cannot switch it on while you think, talk or do something. If a package is needed often, suggest adding it to the sandbox's Containerfile, so it is there at every start.
 - One sandbox per instance. To switch, `close_sandbox`, then `open_sandbox`.
 - A project mounted by another instance can't be mounted, renamed or deleted now: pick another one, or tell the user.
 - Never delete or rename a project unless the user asked for it.
