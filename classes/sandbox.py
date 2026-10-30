@@ -160,6 +160,7 @@ class Sandbox:
             cpus    4        how many CPU cores it may use (default SANDBOX_CPUS)
             gpu     true     it gets the computer's NVIDIA GPUs (needs the NVIDIA Container Toolkit, see Sandboxes/)
             view    6080     a port inside it that you can open in your browser (see classes/relay.py)
+            network true     its network is ON when the agent opens it (default: off, only you switch it on)
         keys starting with _ are notes for you, and are skipped"""
         path = os.path.join(self.sandboxes_dir, name, SETTINGS)
         if not os.path.isfile(path):
@@ -190,8 +191,11 @@ class Sandbox:
             elif key == "view":
                 if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 65535:
                     problems.append('"view" must be a port number, like 6080')
+            elif key == "network":
+                if not isinstance(value, bool):
+                    problems.append('"network" must be true or false')
             else:
-                problems.append('"' + key + '" is not a setting (there are: memory, cpus, gpu, view)')
+                problems.append('"' + key + '" is not a setting (there are: memory, cpus, gpu, view, network)')
         if problems:
             return {}, "can't be used: " + where + ": " + "; ".join(problems) + ". the user must fix it"
         return {k: v for k, v in data.items() if not k.startswith("_")}, None
@@ -199,7 +203,8 @@ class Sandbox:
     def describe_settings(self, settings, short=False):
         """the settings in words, for check_sandbox and (short) /sandbox"""
         parts = ["memory " + settings.get("memory", self.memory), "cpus " + str(settings.get("cpus", self.cpus)),
-                 "GPU " + ("yes" if settings.get("gpu") else "no")]
+                 "GPU " + ("yes" if settings.get("gpu") else "no"),
+                 "network " + ("on" if settings.get("network") else "off") + " when opened"]
         if settings.get("view"):
             parts.append("view: port " + str(settings["view"])
                          + ("" if short else " inside can be opened by the user in their own browser"))
@@ -623,13 +628,14 @@ class Sandbox:
                     return (real + " is mounted by another instance right now. leave it out, or pick another project "
                             "(check_projects)")
                 taken.append(real)
-            self.network = False                       # every sandbox the agent opens starts without internet
-            problem = self.start(name, reals)
+            self.network = self.settings(name)[0].get("network", False)   # off, unless its sandbox.json (yours)
+            problem = self.start(name, reals)                             # says "network": true
             if problem:
                 for real in reals:
                     locks.release(self.project_lock(real))
                 return problem
-            return "running " + name + ", network off. " + self.where() + "\n" + self.status_line()
+            return ("running " + name + ", network " + ("on (its sandbox.json, set by the user)" if self.network
+                                                        else "off") + ". " + self.where() + "\n" + self.status_line())
 
     def close(self):
         """close_sandbox: stop it. its projects are free for other instances again"""

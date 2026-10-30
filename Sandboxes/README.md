@@ -37,7 +37,8 @@ Most sandboxes need none: then the defaults in `config.py` apply (2 GB memory, 2
   "memory": "8g",
   "cpus": 4,
   "gpu": true,
-  "view": 6080
+  "view": 6080,
+  "network": true
 }
 ```
 
@@ -47,8 +48,9 @@ Most sandboxes need none: then the defaults in `config.py` apply (2 GB memory, 2
 | `cpus` | How many CPU cores it may use. Not more than your computer has, or it won't start. | `SANDBOX_CPUS` (2) |
 | `gpu` | `true`: it gets your NVIDIA GPUs. Needs a one-time setup, below. | no GPU |
 | `view` | A port inside the sandbox that you can open in your own browser. `/sandbox` shows the link, e.g. `http://127.0.0.1:53817`. | nothing to open |
+| `network` | `true`: its network is **on** whenever the agent opens it, so you don't have to type `/sandbox net on`. You can still switch it off with `/sandbox net off`. | off |
 
-Only these four exist. Anything else (a typo too) makes the sandbox unusable until it is fixed, and `check_sandbox` and `/sandbox` say what is wrong, so nothing you didn't mean can reach Podman.
+Only these five exist. Anything else (a typo too) makes the sandbox unusable until it is fixed, and `check_sandbox` and `/sandbox` say what is wrong, so nothing you didn't mean can reach Podman.
 
 **About `view`.** It only ever opens on your own computer (127.0.0.1), on a free port that stays the same until you close the program. It doesn't use the network: every connection is carried by `podman exec` (`classes/relay.py`), so it works with the sandbox's network off, on Linux, Mac and Windows alike. It needs `python3` in the sandbox. The program inside should listen on its own 127.0.0.1, then nothing else can reach it at all.
 
@@ -66,7 +68,7 @@ Test it once by hand: `podman run --rm --device nvidia.com/gpu=all ubuntu nvidia
 
 1. The image is built from the Containerfile. The first time takes a while; after that Podman's cache makes it quick, and a change you made to the Containerfile is in the very next start.
 2. A container starts from it, with `--rm` (deleted when it stops), `no-new-privileges`, and limits: memory and cpus from its `sandbox.json` or `config.py`, and `SANDBOX_PIDS`. Its `/dev/shm` (shared memory, which browsers and PyTorch use) is as big as its memory.
-3. Its network is disconnected right away. Only you can switch it on: `/sandbox net on`.
+3. Its network is disconnected right away, unless its `sandbox.json` says `"network": true`. Otherwise only you can switch it on: `/sandbox net on`.
 4. It sees only these folders of your computer, all `noexec,nosuid,nodev`:
 
 | On your computer | Inside | |
