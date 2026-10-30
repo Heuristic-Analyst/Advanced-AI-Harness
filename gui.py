@@ -451,6 +451,62 @@ class Gui:
         self.status_lbl = tk.Label(wrap, text="", bg=BG, fg=FAINT, font=self.F["tiny"], anchor="w")
         self.status_lbl.pack(side="left", fill="x", padx=14, pady=4)
 
+        # the browser's screen: while the browser is OPEN (browser start ... browser stop), its view link on the right
+        # of the footer. click it to watch (and take over) in your own browser. checked every second, also while the
+        # agent works. how the window knows the browser is open: browser.py keeps Shared Folder/Browser/tmp/open.json
+        # while it is, with the sandbox's hostname in it (a file left behind by an older sandbox has another one)
+        link_font = self.F["small"].copy()
+        link_font.configure(underline=True)
+        self.view_url = None
+        self.view_hosts = {}                   # container -> its hostname ("" = unknown, None = being asked)
+        self.view_lbl = tk.Label(wrap, text="", bg=BG, fg=LINK, font=link_font, cursor="hand2")
+        self.view_lbl.bind("<Button-1>", lambda e: self.view_url and webbrowser.open(self.view_url))
+        self.root.after(1000, self._update_view)
+
+    def _browser_open(self):
+        """is the browser open in this instance's sandbox right now? reads Browser/tmp/open.json (see browser.py). the
+        container's hostname is asked from podman once per container, off the window's thread"""
+        sandbox = self.workspace
+        container = sandbox.container
+        project = sandbox.mounted("Browser")
+        if not container or not project:
+            return False
+        if container not in self.view_hosts:
+            self.view_hosts[container] = None
+
+            def ask():
+                code, out = sandbox.podman("inspect", "--format", "{{.Config.Hostname}}", container, timeout=60)
+                self.view_hosts[container] = out.strip() if code == 0 else ""
+            threading.Thread(target=ask, daemon=True).start()
+        host = self.view_hosts.get(container)
+        if not host:                                   # still asking, or podman couldn't say
+            return False
+        try:
+            with open(os.path.join(sandbox.shared_dir, project, "tmp", "open.json"), encoding="utf-8") as f:
+                return json.load(f).get("host") == host
+        except (OSError, ValueError, AttributeError):  # no file (closed), or half written: not open (yet)
+            return False
+
+    def _update_view(self):
+        """show, change or hide the view link in the footer: only while the browser is open"""
+        try:
+            url = self.workspace.view_url() if self.workspace else None
+            if url and not self._browser_open():
+                url = None
+        except BaseException:
+            url = None
+        try:
+            if url != self.view_url:
+                self.view_url = url
+                if url:
+                    self.view_lbl.configure(text="browser view: " + url.replace("http://", ""))
+                    self.view_lbl.pack(side="right", padx=14, pady=4, before=self.status_lbl)   # before: it keeps
+                else:                                                                         # its room when the
+                    self.view_lbl.pack_forget()                                               # status line is long
+            self.root.after(1000, self._update_view)
+        except tk.TclError:                    # the window is closing
+            pass
+
     def _body_parts(self):
         self.body = tk.Frame(self.root, bg=BG)
         self.body.pack(side="top", fill="both", expand=True)

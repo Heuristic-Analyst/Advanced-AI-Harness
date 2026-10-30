@@ -23,7 +23,8 @@ tmp/
 ├── shots/        screenshots
 ├── files/        pdfs and pages the agent saved
 ├── logs/         what the screen and the browser printed, for when something breaks
-└── output.json   the last long answer, for `browser more`
+├── output.json   the last long answer, for `browser more`
+└── open.json     there only while the browser is open: the window (gui.py) shows the view link only then
 ```
 
 Like any project, only one instance can have `Browser` mounted at a time, so two browsers never share one profile.

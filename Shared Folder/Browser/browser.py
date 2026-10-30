@@ -38,6 +38,8 @@ SHOTS = os.path.join(TMP, "shots")                     # screenshots without a p
 FILES = os.path.join(TMP, "files")                     # a place for pdfs and other saved pages
 LOGS = os.path.join(TMP, "logs")                       # what the screen and the browser print, for when something breaks
 OUTPUT = os.path.join(TMP, "output.json")              # the last long answer, for `browser more`
+OPEN = os.path.join(TMP, "open.json")                  # there only while the browser is open. the window (gui.py) sees
+                                                       # it in Shared Folder/Browser/tmp and shows the view link only then
 
 AGENT_BROWSER = ["/opt/agent-browser/node_modules/.bin/agent-browser"]   # where the image puts it: outside the PATH, so
                                                        # it is only ever started through this file
@@ -61,6 +63,19 @@ USAGE = """browser: a real Chromium for the agent (agent-browser), with a screen
 # --- small helpers ---
 def say(text):
     print(text.rstrip())
+
+
+def mark(is_open):
+    """write or remove OPEN. it holds this sandbox's hostname: a file left behind by a sandbox that was closed without
+    browser stop belongs to another hostname, so the window doesn't take it for an open browser"""
+    try:
+        if is_open:
+            with open(OPEN, "w") as f:
+                json.dump({"host": os.uname().nodename, "since": time.time()}, f)
+        elif os.path.exists(OPEN):
+            os.remove(OPEN)
+    except OSError:                                    # tmp/ not writable (Browser not mounted): nothing to mark
+        pass
 
 
 def agent_browser():
@@ -242,6 +257,7 @@ def start(url=None):
         say(problem)
         return 1
     if browser_pids():
+        mark(True)
         say("the browser is open already.\n" + status_text())
         return 0
     clear_locks()
@@ -251,9 +267,11 @@ def start(url=None):
     while time.time() < give_up and not browser_pids():
         time.sleep(0.3)
     if not browser_pids():
+        mark(False)
         say("the browser did not start (exit code " + str(code) + "):\n" + text[-2000:]
             + "\nlogs: " + LOGS)
         return 1
+    mark(True)
     lines = ["the browser is open" + (" on a screen the user can watch: the \"view\" link (the user sees it with "
                                       "/sandbox, and it is in your status line)" if screen else
                                       " (no screen: nobody can watch it)") + ".",
@@ -283,6 +301,7 @@ def stop():
           if any(os.path.basename(a).startswith("agent-browser") for a in args[:2])])
     stop_screen()
     clear_locks()
+    mark(False)
     say(("the browser is closed" if was_open else "the browser was not open") + ", and the screen is off. "
         "logins stay in " + PROFILE + " (delete " + TMP + " to forget them).")
     return 0
@@ -376,6 +395,8 @@ def main(args):
         return stop()
     if command == "status":
         problem = missing()
+        if not problem:
+            mark(bool(browser_pids()))                 # in step with what really runs (e.g. chromium crashed)
         say(problem or status_text())
         return 1 if problem else 0
     if command == "more":
@@ -387,6 +408,7 @@ def main(args):
     if command in ("close", "quit", "exit"):           # agent-browser's own close would leave the screen running
         return stop()
     if not browser_pids():
+        mark(False)
         say("the browser is not open: browser start [url] first. (websites also need the sandbox's network: if the "
             "user hasn't switched it on, ask them for /sandbox net on)")
         return 1
