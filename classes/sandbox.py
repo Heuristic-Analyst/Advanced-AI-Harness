@@ -38,12 +38,15 @@ import threading
 import subprocess
 from functions import locks
 from classes.relay import Relay
+from classes.terminal import Terminal
 
 PROJECT_NAME = r"[A-Za-z0-9][A-Za-z0-9._-]*"           # what a project folder must be called to be used by the tools
 SANDBOX_NAME = r"[a-z0-9]+(-[a-z0-9]+)*"                # what podman accepts in an image name: lowercase, digits, -
 NETWORK = "podman"                                      # podman's own network. connected = internet, disconnected = none
 SETTINGS = "sandbox.json"                               # Sandboxes/<name>/sandbox.json: that sandbox's settings (optional)
 MEMORY = r"[1-9][0-9]*[kmgKMG]"                         # a memory size podman understands: 512m, 4g
+TERMINAL_NAME = r"[A-Za-z0-9_-]{1,30}"                  # what a terminal may be called: main, server, build-2
+TERMINALS = 4                                           # terminals open at once, per instance
 
 
 class Sandbox:
@@ -69,6 +72,7 @@ class Sandbox:
         self.relay = None                      # the door for your browser into the sandbox ("view"). made when first needed
         self.network = False                   # internet on? off whenever the agent opens a sandbox. only you switch it on
         self.notebooks = {}                    # the open notebooks: "Common/sales.ipynb" -> its lock name
+        self.terminals = {}                    # the open terminals (shells that stay open): "main" -> its Terminal
         self.notes = []                        # what YOU changed with /sandbox: told to the model with your next message
         self.lost = None                       # the sandbox stopped by itself (out of memory, removed by hand): which one
         self.starts = 0                        # containers this instance started so far, for their names
@@ -314,6 +318,9 @@ class Sandbox:
         for lock in list(self.notebooks.values()):    # the kernels died with the container
             locks.release(lock)
         self.notebooks.clear()
+        for terminal in list(self.terminals.values()):   # they ran inside the container: gone with it
+            terminal.close()
+        self.terminals.clear()
         if self.relay:                                 # the door leads nowhere until a sandbox with "view" starts
             self.relay.point(None, None)
         self.container = None
@@ -493,6 +500,7 @@ class Sandbox:
         return ("[now: sandbox " + self.name + " runs, projects " + (", ".join(self.projects) or "none")
                 + ", working folder " + self.workdir() + ", network " + ("on" if self.network else "off")
                 + ", open notebooks: " + (", ".join(self.notebooks) or "none")
+                + ", open terminals: " + (self.terminals_text() or "none")
                 + (", view for the user: " + view if view else "") + "]")
 
     def where(self):
@@ -526,6 +534,7 @@ class Sandbox:
                                                      for p in self.projects) or "none mounted"))
             lines.append("- network: " + ("on" if self.network else "off (only the user can switch it on)"))
             lines.append("- open notebooks: " + (", ".join(self.notebooks) or "none"))
+            lines.append("- open terminals: " + (self.terminals_text() or "none"))
             if self.view_url():
                 lines.append("- view: the user can watch at " + self.view_url() + " (in their own browser)")
         else:
@@ -648,7 +657,7 @@ class Sandbox:
                 locks.release(self.project_lock(project))
             return "the sandbox was stopped, but could not start again: " + problem
         return ("restarted " + name + ": whatever was installed or started inside since its start is gone, open "
-                "notebooks were closed (nb_open them again). " + self.where())
+                "notebooks were closed (nb_open them again), open terminals too. " + self.where())
 
     def mount(self, project):
         """mount_project: mount one more project (the ones mounted stay). restarts the sandbox"""
@@ -793,6 +802,82 @@ class Sandbox:
         if lock:
             locks.release(lock)
 
+    # --- terminals: shells that stay open between calls (classes/terminal.py) ---
+    def terminals_text(self):
+        """the open terminals and where each one is, e.g. "main (in /workspace/website)" """
+        return ", ".join(name + " (in " + str(t.folder) + ")" for name, t in self.terminals.items() if t.alive())
+
+    def terminal(self, command, name=None):
+        """terminal: run a command in a shell that stays open (opened by the first call with this name). its folder
+        (cd), variables, functions and activated environments stay for the next call"""
+        name = str(name or "main").strip()
+        if not re.fullmatch(TERMINAL_NAME, name):
+            return "a terminal's name: letters, digits, - and _ only, at most 30 characters, e.g. main or server"
+        if not isinstance(command, str) or not command.strip():
+            return "give the command to run"
+        if not self.running():
+            return self.not_running()
+        opened = ""
+        with self.lock:                                # opening: one at a time, and not while the sandbox restarts
+            terminal = self.terminals.get(name)
+            if terminal and not terminal.alive():
+                self.terminals.pop(name)
+                terminal = None
+            if not terminal:
+                if len(self.terminals) >= TERMINALS:
+                    return ("already " + str(TERMINALS) + " terminals are open: " + self.terminals_text()
+                            + ". use one of them, or close_terminal one first")
+                shell = ["bash", "--noprofile", "--norc", "--noediting", "-i"]   # -i: see classes/terminal.py
+                terminal = Terminal(name, [self.command, "exec", "-i", "--workdir", self.workdir(), self.container]
+                                    + shell, [self.command, "exec", self.container])
+                problem = terminal.start()
+                if problem:
+                    return problem
+                self.terminals[name] = terminal
+                opened = "(opened a new terminal '" + name + "' in " + str(terminal.folder) + ")\n"
+        text, code, note = terminal.run(command, self.timeout)
+        text = text.strip("\n")
+        if note == "ended" or note == "timeout_reset":
+            with self.lock:
+                if self.terminals.get(name) is terminal:
+                    self.terminals.pop(name)
+        if note is None:
+            answer = text or "(no output)"
+            if code:
+                answer += "\n(exit code " + str(code) + ")"
+        elif note == "timeout":
+            answer = ((text + "\n") if text else "") + ("error: stopped after " + str(self.timeout) + " seconds "
+                      "(like ctrl+c). the terminal is still open: its folder and variables are kept")
+        elif note == "timeout_reset":
+            answer = ((text + "\n") if text else "") + ("error: stopped after " + str(self.timeout) + " seconds, "
+                      "and it didn't end, so the terminal '" + name + "' was closed. its folder and variables are "
+                      "gone; the next call opens a new one")
+        else:
+            answer = ((text + "\n") if text else "") + ("the terminal '" + name + "' ended (exit, `set -e` and a "
+                      "failing command, or the sandbox stopped). its folder and variables are gone; the next call "
+                      "opens a new one")
+        if terminal.alive():
+            answer += "\n[terminal " + name + ", now in " + str(terminal.folder) + "]"
+        return opened + answer
+
+    def close_terminal(self, name=None):
+        """close_terminal: close one terminal, or all of them (no name)"""
+        with self.lock:
+            if not self.terminals:
+                return "no terminal is open"
+            if name:
+                terminal = self.terminals.pop(str(name).strip(), None)
+                if not terminal:
+                    return "no terminal called '" + str(name) + "'. open: " + (self.terminals_text() or "none")
+                closing = [terminal]
+            else:
+                closing = list(self.terminals.values())
+                self.terminals.clear()
+        for terminal in closing:                       # outside the lock: closing a busy one takes a few seconds
+            terminal.close()
+        names = ", ".join(t.name for t in closing)
+        return ("closed " + names + ". programs it started in the background keep running\n" + self.status_line())
+
     # --- your /sandbox commands (main.py) ---
     def overview(self):
         """/sandbox: what runs here, and every sandbox"""
@@ -845,5 +930,6 @@ class Sandbox:
                 return "no sandbox runs in this instance"
             self.stop()
             self.notes.append("[from the program, not the user] The user closed the sandbox (" + here + "). Everything "
-                              "inside it is gone, open notebooks are closed; the files in Shared Folder stay.")
+                              "inside it is gone, open notebooks and terminals are closed; the files in Shared Folder "
+                              "stay.")
             return "stopped " + here

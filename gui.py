@@ -72,6 +72,7 @@ BAD     = "#C0503C"
 LINE    = "#E6E1D7"
 
 SIDE_W  = 236           # how wide the conversation list is
+HINT    = "Enter sends  ·  Shift+Enter makes a new line  ·  /help shows the commands"   # under the input box
 HISTORY_SHOWN = 120     # how many of the newest messages are drawn when a conversation is opened.
                         # the rest is one click away (the line at the top), so a long conversation opens fast
 
@@ -546,7 +547,7 @@ class Gui:
                                   font=self.F["ui_bold"], state="disabled")
         self.send_btn.pack(side="bottom")
 
-        self.hint = tk.Label(outer, text="Enter sends  ·  Shift+Enter makes a new line  ·  /help shows the commands",
+        self.hint = tk.Label(outer, text=HINT,
                              bg=BG, fg=FAINT, font=self.F["tiny"], anchor="w")
         self.hint.pack(side="top", fill="x", pady=(5, 0))
 
@@ -1112,10 +1113,14 @@ class Gui:
             self.q.put(("done", None))
 
     def _set_input(self, on):
-        self.entry.configure(state="normal" if on else "disabled")
+        # the box stays open while the agent works, so you can already write your next message. only sending waits:
+        # the button is grey, and Enter does nothing (see _send) - what you typed stays in the box until it is done
+        self.entry.configure(state="normal" if (on or self.ready) else "disabled")
         self.send_btn.configure(state="normal" if on else "disabled",
                                 bg=ACCENT if on else "#D9D0C3")
         self.busy_lbl.configure(text="" if on else "working…")
+        self.hint.configure(text=HINT if on or not self.ready else
+                            "the agent is working  ·  you can already type your next message, send it when it is done")
         if on:
             try:
                 self.entry.focus_set()

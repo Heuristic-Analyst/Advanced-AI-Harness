@@ -13,7 +13,9 @@ Everything the agent can *do* is a tool, and every tool is one Python file in he
 | `check_sandbox` | `sandbox/check_sandbox.py` | Every sandbox with its whole Containerfile and its settings (`sandbox.json`), and which one runs here. Changes nothing. |
 | `open_sandbox` | `sandbox/open_sandbox.py` | Builds and starts a sandbox for this instance, network off, optionally with projects mounted right away. |
 | `close_sandbox` | `sandbox/close_sandbox.py` | Stops it. Its projects are free for other instances again. |
-| `sandbox_shell` | `sandbox/sandbox_shell.py` | Runs a bash command inside, and returns what it printed. Stopped after `COMMAND_TIMEOUT` seconds. |
+| `sandbox_shell` | `sandbox/sandbox_shell.py` | Runs a bash command inside, and returns what it printed. A fresh shell every time. Stopped after `COMMAND_TIMEOUT` seconds. |
+| `terminal` | `sandbox/terminal.py` | Runs a bash command in a shell that **stays open** between calls (`cd`, variables, functions, an activated venv stay). Up to 4 named terminals (`main`, `server`, ...). Too slow: ctrl+c, the terminal stays open. The logic is in `classes/terminal.py`. |
+| `close_terminal` | `sandbox/close_terminal.py` | Closes one terminal, or all. Its background programs keep running. |
 | `check_projects` | `sandbox/check_projects.py` | The project folders: free, mounted here, or mounted by another running instance. |
 | `create_project` | `sandbox/create_project.py` | A new, empty folder `Shared Folder/<name>`. |
 | `mount_project` | `sandbox/mount_project.py` | Mounts one more project at `/workspace/<name>`; the others stay. Restarts the sandbox. |

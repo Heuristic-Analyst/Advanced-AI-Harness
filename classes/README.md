@@ -4,6 +4,7 @@
 |---|---|
 | `agent.py` | The `Agent`: one conversation with one model. It sends the conversation to the model, prints the answer, runs the tools, logs every message, and asks for checkpoints. |
 | `sandbox.py` | The `Sandbox`: this instance's container (Podman), its projects, its settings (`Sandboxes/<name>/sandbox.json`), the network. Everything that talks to Podman. |
+| `terminal.py` | The `Terminal`: one bash that stays open inside the container (`podman exec -i`), for the `terminal` tool. Commands go in, the output comes back up to a marker line; too slow = ctrl+c for that command only. |
 | `relay.py` | The `Relay`: the door from your computer (127.0.0.1) into a sandbox's "view" port, through `podman exec`. |
 
 `main.py` makes one `Agent` per conversation (`new_agent`), and calls `agent.ask(text)` for every message you type. Everything the agent needs comes in as a parameter, so `agent.py` itself knows nothing about folders or files: `main.py` tells it.

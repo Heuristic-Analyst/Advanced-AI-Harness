@@ -21,7 +21,9 @@ The sandbox is a throwaway Linux container. Everything you run happens there, ne
 1. **Look first.** Your system prompt says what ran when this context started; later tool results are newer. If unsure: `check_sandbox` (which sandbox runs, what each one contains) and `check_projects`.
 2. **Pick the project before you start.** Does the work belong to a project? Use an existing one, or `create_project` (only if none fits). Give every project the work needs to `open_sandbox(name, projects=[...])` right away: `mount_project` and `unmount_project` restart the sandbox, which loses installs, running programs and open notebooks. The first project you can write in is the working folder. No project: work in `/workspace/Common`.
 3. **Pick the sandbox by its Containerfile and settings.** It is exactly what you get. Notebooks need one with python3 (e.g. `python`). Its settings come from the user: memory, a GPU (`gpu: yes`), a "view" the user can watch. You can't change them; if a task needs more, tell the user.
-4. **Work with sandbox_shell.** Small steps, read what each command prints. Big output: write it to a file in /workspace and search it with grep, instead of printing it all.
+4. **Work with sandbox_shell or terminal.** Small steps, read what each command prints. Big output: write it to a file in /workspace and search it with grep, instead of printing it all.
+   - `sandbox_shell`: a fresh shell every call. Good for single, independent commands; several run at the same time.
+   - `terminal`: a shell that stays open, like a terminal window. Use it when steps build on each other: `cd` into a folder, `export` variables, `source .venv/bin/activate`, then work there over many calls. Each answer ends with the folder it is in now. More than one at once: give them names (`terminal="server"`). Commands get no keyboard input, so use `-y` and similar flags.
 5. **Long jobs** (over the time limit): start them in the background with their output in a file, `nohup python job.py > job.log 2>&1 &`, then check the file.
 6. **When done**, tell the user where the results are, as paths on their computer: `Shared Folder/<project>/...` or `Shared Folder/Common/...`.
 
@@ -29,6 +31,7 @@ The sandbox is a throwaway Linux container. Everything you run happens there, ne
 
 - The network is off. Installing (`pip install`, `apt-get install`) needs it, and only the user can switch it on (`/sandbox net on`). Ask them, say what you want to install and stop, because the user cannot switch it on while you think, talk or do something. If a package is needed often, suggest adding it to the sandbox's Containerfile, so it is there at every start.
 - One sandbox per instance. To switch, `close_sandbox`, then `open_sandbox`.
+- Terminals end when the sandbox stops or restarts (`mount_project`, `unmount_project`): after that, `cd` and activate again.
 - A project mounted by another instance can't be mounted, renamed or deleted now: pick another one, or tell the user.
 - Never delete or rename a project unless the user asked for it.
 - After a checkpoint, your notes don't need to repeat what runs (the system prompt shows that), but they must say which files and notebooks matter and what each one is for.
