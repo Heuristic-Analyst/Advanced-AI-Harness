@@ -42,9 +42,11 @@ A real Chromium, in the `browser` sandbox. You drive it with the `browser` comma
 
 ## When a human is needed
 
-A captcha, an "are you a robot" check, a login, a two-factor code, or anything else only a person can do: don't try to get around it. Hand it to the user:
+A captcha, an "unusual traffic" or "are you a robot" page, a login, a two-factor code, or anything else only a person can do: **stop right there and hand it to the user.** The `browser` command puts a `[STOP: ...]` note in front of pages that look like a bot check.
 
-1. Stop and tell the user in the chat, in plain words, what is needed and on which page. For example: "The site shows a captcha. Please click the **browser view** link at the bottom right of the window, solve the captcha there, then write here that you're done." (In the terminal version there is no window: they type `/sandbox` to see the view link.)
+**Don't work around it.** No other website, no other search engine (no DuckDuckGo or Bing instead of Google), no other way to the same answer, and no answer from your own knowledge instead. Only if the user says so in the chat.
+
+1. Tell the user in the chat, in plain words, what is needed and on which page, and nothing else. For example: "Google shows a captcha. Please click the **browser view** link at the bottom right of the window, solve it there, then write here that you're done." (In the terminal version there is no window: they type `/sandbox` to see the view link.) Don't offer alternatives in the same reply.
 2. Then end your reply and wait. The user can't send a message while you are still working, so don't keep going or wait in a loop.
 3. When the user writes that it is done: `browser snapshot -i` and check it really worked, then go on. Still blocked? Say what you see and ask again.
 

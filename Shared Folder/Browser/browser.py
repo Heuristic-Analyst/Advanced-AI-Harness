@@ -52,6 +52,13 @@ PAGE = 6000                                            # characters per answer. 
                                                        # as a "result" and shows only a preview: so stay below
 TIMEOUT = 120                                          # seconds one call may take (agent-browser's own limit is 25 s)
 ANSI = re.compile(r"\x1b\[[0-9;?]*[A-Za-z]")           # terminal colours, in case some still come through
+HUMAN_CHECK = re.compile(r"captcha|unusual traffic|not a robot|are you a robot|are you human|verify (that )?you are "
+                         r"(a )?human|confirm you are (a )?human|google\.[a-z.]+/sorry|challenges\.cloudflare\.com|"
+                         r"just a moment\.\.\.|press (&|and) hold", re.IGNORECASE)   # what bot checks say
+STOP = ("[STOP: this page looks like a check only a person can pass (a captcha or bot check). Do NOT go around it: no "
+        "other site, no other search engine, no other route, unless the user says so. End your reply now and ask the "
+        "user: click the \"browser view\" link at the bottom right of the window, solve it there, then write that it "
+        "is done. When they did: browser snapshot -i, and go on from there]")
 
 USAGE = """browser: a real Chromium for the agent (agent-browser), with a screen the user can watch.
   browser start [url]     open it              browser stop          close it
@@ -277,7 +284,7 @@ def start(url=None):
                                       " (no screen: nobody can watch it)") + ".",
              "profile (logins are kept): " + PROFILE + ". downloads: " + DOWNLOADS + "."]
     if url:
-        lines.append(text)
+        lines.append(human_check(text) + text)
         if re.search(r"ERR_INTERNET_DISCONNECTED|ERR_NAME_NOT_RESOLVED|ERR_NETWORK", text):
             lines.append("the page could not load: the sandbox's network is probably off. ask the user to switch it "
                          "on (/sandbox net on)")
@@ -319,10 +326,17 @@ def status_text():
     return "\n".join(lines)
 
 
+def human_check(text):
+    """the STOP note in front of an answer that looks like a captcha or bot check, otherwise nothing. the skill says
+    the same, but this comes at the very moment the agent decides what to do next"""
+    return STOP + "\n\n" if HUMAN_CHECK.search(text) else ""
+
+
 def show(code, text):
     """print an answer. a long one is cut into parts of PAGE characters: the first is shown, the rest is kept for
     `browser more`"""
     text = text.strip() or "(no output)"
+    text = human_check(text) + text           # in front: seen even when the answer is long
     if len(text) <= PAGE:
         say(text)
         return code
